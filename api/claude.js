@@ -17,7 +17,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { messages, max_tokens = 1000, model = "claude-sonnet-4-5" } = req.body;
+    // ⚡ max_tokens par défaut augmenté à 4000 pour éviter les JSON tronqués
+    const { messages, max_tokens = 4000, model = "claude-sonnet-4-5" } = req.body;
 
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: "messages array required" });
