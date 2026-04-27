@@ -298,8 +298,26 @@ const ACCT_COLORS = [
   {bg:"rgba(248,113,113,.08)",bd:"rgba(248,113,113,.25)",tx:"#f87171"},
 ];
 
+// ⚡ Parse robustement un JSON renvoyé par Claude (tolère markdown, texte avant/après)
+function safeParseJSON(text) {
+  if (!text) throw new Error("Réponse vide de Claude");
+  let cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1) {
+    throw new Error("Pas de JSON trouvé dans la réponse");
+  }
+  cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.error("JSON brut reçu:", cleaned.slice(0, 500) + "...");
+    throw new Error(`JSON mal formé: ${e.message}. La réponse de Claude a peut-être été tronquée — essaie avec moins de données.`);
+  }
+}
+
 // ⚡ MODIFIÉ : appel Claude via notre proxy serverless (sécurisé)
-async function callClaude(messages, maxTokens = 1000) {
+async function callClaude(messages, maxTokens = 4000) {
   const res = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -319,9 +337,8 @@ async function extractPDFTransactions(b64, accountName) {
     {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
     {type:"text",text:`Relevé bancaire pour "${accountName}". Extrais TOUTES les transactions. Retourne UNIQUEMENT ce JSON (sans markdown) :\n{"transactions":[{"date":"YYYY-MM-DD","label":"libellé","amount":0}]}\nDébits=négatif, crédits=positif.`}
   ]}]);
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("Pas de JSON");
-  return (JSON.parse(match[0]).transactions||[]).map(t=>({date:t.date||"",libelle:t.label||"",montant:String(t.amount||0)}));
+  const parsed = safeParseJSON(text);
+  return (parsed.transactions||[]).map(t=>({date:t.date||"",libelle:t.label||"",montant:String(t.amount||0)}));
 }
 function defaultMonths() {
   const now = new Date(); const months = [];
@@ -431,13 +448,10 @@ export default function App() {
       const sections = accounts.map(a=>`=== ${a.name} ===\n${a.rows.map((r,i)=>`  ${i+1}. ${r.date||gDate(r)} | ${r.libelle||gLabel(r)} | ${fmt(parseFloat(r.montant||0)||gAmt(r))} €`).join("\n")}`).join("\n\n");
       const prompt = `Tu es expert en rapprochement bancaire. ${accounts.length} comptes.\n\n${sections}\n\nRetourne UNIQUEMENT ce JSON (sans markdown) :\n{"summary":{"totalA":0,"totalB":0,"matched":0,"unmatched":0,"ecart":0,"taux_rapprochement":0},"pairs":[{"dateA":"","labelA":"","amountA":0,"dateB":"","labelB":"","amountB":0,"delta":0,"status":"matched"}],"unmatched":[{"account":"","date":"","label":"","amount":0,"reason":""}],"analysis":"Analyse 3-5 phrases en français."}`;
       const text = await callClaude([{role:"user",content:prompt}]);
-      const match = text.match(/\{[\s\S]*\}/);
-      if (match) {
-        const r = JSON.parse(match[0]);
-        setRapproResult(r);
-        await addToHistory({id:Date.now(),type:"rapprochement",title:`${accounts.map(a=>a.name).join(" vs ")}`,date:nowStr(),result:r,summary:{taux_rapprochement:r.summary?.taux_rapprochement,matched:r.summary?.matched,unmatched:r.summary?.unmatched,ecart:r.summary?.ecart},accounts:accounts.map(a=>a.name)});
-      }
-    } catch(e){console.error(e);}
+      const r = safeParseJSON(text);
+      setRapproResult(r);
+      await addToHistory({id:Date.now(),type:"rapprochement",title:`${accounts.map(a=>a.name).join(" vs ")}`,date:nowStr(),result:r,summary:{taux_rapprochement:r.summary?.taux_rapprochement,matched:r.summary?.matched,unmatched:r.summary?.unmatched,ecart:r.summary?.ecart},accounts:accounts.map(a=>a.name)});
+    } catch(e){console.error(e); alert("Erreur d'analyse: "+e.message);}
     setLoading(false); setLoadingMsg("");
   };
 
@@ -448,14 +462,11 @@ export default function App() {
       const sections = accounts.map(a=>`=== ${a.name} ===\n${a.rows.map((r,i)=>`  ${i+1}. ${r.date||gDate(r)} | ${r.libelle||gLabel(r)} | ${fmt(parseFloat(r.montant||0)||gAmt(r))} €`).join("\n")}`).join("\n\n");
       const mxInit = JSON.stringify(names.reduce((acc,a)=>{names.forEach(b=>{if(!acc[a])acc[a]={};acc[a][b]=0});return acc},{}));
       const prompt = `Expert flux bancaires intercomptes. Comptes: ${names.join(", ")}.\n\n${sections}\n\nRetourne UNIQUEMENT ce JSON:\n{"summary":{"total_flows":0,"confirmed":0,"unilateral":0,"partial":0,"total_volume":0},"flows":[{"date":"","label":"","amount":0,"source":"","destination":"","status":"confirmed","source_label":"","dest_label":"","ecart":0,"note":""}],"matrix":${mxInit},"analysis":"Analyse en français."}`;
-      const text = await callClaude([{role:"user",content:prompt}],1000);
-      const match = text.match(/\{[\s\S]*\}/);
-      if (match) {
-        const r = JSON.parse(match[0]);
-        setIcResult(r);
-        await addToHistory({id:Date.now(),type:"intercomptes",title:`Flux: ${names.join(", ")}`,date:nowStr(),result:r,summary:{total_flows:r.summary?.total_flows,confirmed:r.summary?.confirmed,total_volume:r.summary?.total_volume},accounts:names});
-      }
-    } catch(e){console.error(e);}
+      const text = await callClaude([{role:"user",content:prompt}],4000);
+      const r = safeParseJSON(text);
+      setIcResult(r);
+      await addToHistory({id:Date.now(),type:"intercomptes",title:`Flux: ${names.join(", ")}`,date:nowStr(),result:r,summary:{total_flows:r.summary?.total_flows,confirmed:r.summary?.confirmed,total_volume:r.summary?.total_volume},accounts:names});
+    } catch(e){console.error(e); alert("Erreur d'analyse: "+e.message);}
     setLoading(false); setLoadingMsg("");
   };
 
@@ -465,14 +476,11 @@ export default function App() {
       const rows = qbMonths.map(m=>({month:m.label,bank:parseFloat(m.bankSolde.replace(",","."))||0,qb:parseFloat(m.qbSolde.replace(",","."))||0}));
       const dataStr = rows.map(r=>`  - ${r.month}: Bancaire=${fmt(r.bank)}€, QB=${fmt(r.qb)}€, Écart=${fmt(r.bank-r.qb)}€`).join("\n");
       const prompt = `Expert-comptable conciliation QB. Compte "${qbAcctName}".\n\n${dataStr}\n\nRetourne UNIQUEMENT ce JSON:\n{"months":[{"month":"","bank":0,"qb":0,"ecart":0,"ecart_pct":0,"status":"ok","causes_possibles":"","actions":""}],"global":{"ecart_total":0,"ecart_moyen":0,"mois_problematiques":0,"tendance":"stable"},"analysis":"Analyse 4-6 phrases en français avec recommandations QB concrètes."}`;
-      const text = await callClaude([{role:"user",content:prompt}],1000);
-      const match = text.match(/\{[\s\S]*\}/);
-      if (match) {
-        const r = JSON.parse(match[0]);
-        setQbResult(r);
-        await addToHistory({id:Date.now(),type:"conciliation",title:`QB: ${qbAcctName}`,date:nowStr(),result:r,summary:{months:rows.length,problems:r.global?.mois_problematiques,avg_ecart:r.global?.ecart_moyen,tendance:r.global?.tendance},qbData:{accountName:qbAcctName,months:qbMonths}});
-      }
-    } catch(e){console.error(e);}
+      const text = await callClaude([{role:"user",content:prompt}],4000);
+      const r = safeParseJSON(text);
+      setQbResult(r);
+      await addToHistory({id:Date.now(),type:"conciliation",title:`QB: ${qbAcctName}`,date:nowStr(),result:r,summary:{months:rows.length,problems:r.global?.mois_problematiques,avg_ecart:r.global?.ecart_moyen,tendance:r.global?.tendance},qbData:{accountName:qbAcctName,months:qbMonths}});
+    } catch(e){console.error(e); alert("Erreur d'analyse: "+e.message);}
     setLoading(false); setLoadingMsg("");
   };
 
