@@ -1,797 +1,1743 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CSS
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// CHARGEMENT pdf.js DEPUIS CDN
+// ═══════════════════════════════════════════════════════════════════════════
+const loadPdfJs = () => {
+  return new Promise((resolve, reject) => {
+    if (window.pdfjsLib) return resolve(window.pdfjsLib);
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      resolve(window.pdfjsLib);
+    };
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+};
+
+// 🆕 Charge jsPDF + autoTable depuis CDN (pour le PDF des flux intercomptes)
+const loadJsPDF = () => {
+  return new Promise((resolve, reject) => {
+    if (window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API.autoTable) {
+      return resolve(window.jspdf);
+    }
+    const s1 = document.createElement("script");
+    s1.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s1.onload = () => {
+      const s2 = document.createElement("script");
+      s2.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js";
+      s2.onload = () => resolve(window.jspdf);
+      s2.onerror = () => reject(new Error("Échec chargement jspdf-autotable"));
+      document.head.appendChild(s2);
+    };
+    s1.onerror = () => reject(new Error("Échec chargement jsPDF"));
+    document.head.appendChild(s1);
+  });
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CSS AVEC VARIABLES (toggle thème)
+// ═══════════════════════════════════════════════════════════════════════════
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'DM Mono', monospace; background: #0a0e1a; color: #e2e8f4; min-height: 100vh; }
-  .app { min-height: 100vh; background: #0a0e1a;
-    background-image: radial-gradient(ellipse 80% 50% at 20% 0%,rgba(56,189,248,.06) 0%,transparent 60%),
-      radial-gradient(ellipse 60% 40% at 80% 100%,rgba(99,102,241,.07) 0%,transparent 60%); }
 
-  /* HEADER */
+  :root {
+    --bg: #0a0e1a;
+    --bg-glow1: rgba(56,189,248,.06);
+    --bg-glow2: rgba(99,102,241,.07);
+    --text: #e2e8f4;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+    --text-very-dim: #475569;
+    --card: rgba(15,23,42,.6);
+    --card-solid: rgba(15,23,42,.5);
+    --card-darker: rgba(15,23,42,.9);
+    --header-bg: rgba(10,14,26,.9);
+    --nav-bg: rgba(10,14,26,.7);
+    --border: rgba(255,255,255,.07);
+    --border-light: rgba(255,255,255,.04);
+    --border-input: rgba(255,255,255,.1);
+    --input-bg: rgba(15,23,42,.8);
+    --hover-row: rgba(56,189,248,.03);
+    --accent: #38bdf8;
+    --accent-dark: #0ea5e9;
+    --primary-text: #fff;
+    --shadow: rgba(0,0,0,.2);
+  }
+
+  .theme-light {
+    --bg: #f8fafc;
+    --bg-glow1: rgba(56,189,248,.10);
+    --bg-glow2: rgba(99,102,241,.08);
+    --text: #0f172a;
+    --text-muted: #475569;
+    --text-dim: #64748b;
+    --text-very-dim: #94a3b8;
+    --card: rgba(255,255,255,.85);
+    --card-solid: rgba(241,245,249,.9);
+    --card-darker: rgba(248,250,252,.95);
+    --header-bg: rgba(255,255,255,.9);
+    --nav-bg: rgba(255,255,255,.7);
+    --border: rgba(15,23,42,.08);
+    --border-light: rgba(15,23,42,.05);
+    --border-input: rgba(15,23,42,.12);
+    --input-bg: #fff;
+    --hover-row: rgba(56,189,248,.06);
+    --primary-text: #fff;
+    --shadow: rgba(15,23,42,.08);
+  }
+
+  body { font-family: 'DM Mono', monospace; background: var(--bg); color: var(--text); min-height: 100vh; transition: background .25s, color .25s; }
+  .app { min-height: 100vh; background: var(--bg);
+    background-image: radial-gradient(ellipse 80% 50% at 20% 0%, var(--bg-glow1) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 100%, var(--bg-glow2) 0%, transparent 60%); }
+
   .header { display:flex; align-items:center; justify-content:space-between; padding:18px 40px;
-    border-bottom:1px solid rgba(255,255,255,.06); backdrop-filter:blur(10px);
-    position:sticky; top:0; z-index:100; background:rgba(10,14,26,.9); }
-  .logo { font-family:'Syne',sans-serif; font-weight:800; font-size:20px; letter-spacing:-.5px; color:#fff; }
-  .logo span { color:#38bdf8; }
-  .badge { font-size:10px; background:rgba(56,189,248,.12); color:#38bdf8;
+    border-bottom:1px solid var(--border); backdrop-filter:blur(10px);
+    position:sticky; top:0; z-index:100; background:var(--header-bg); }
+  .header-left { display:flex; align-items:center; gap:16px; }
+  .logo { font-family:'Syne',sans-serif; font-weight:800; font-size:20px; letter-spacing:-.5px; color:var(--text); }
+  .logo span { color:var(--accent); }
+  .badge { font-size:10px; background:rgba(56,189,248,.12); color:var(--accent);
     border:1px solid rgba(56,189,248,.25); border-radius:20px; padding:4px 10px; letter-spacing:1px; text-transform:uppercase; }
+  .theme-toggle { background: var(--input-bg); border: 1px solid var(--border-input); color: var(--text);
+    width: 36px; height: 36px; border-radius: 50%; cursor: pointer; font-size: 16px;
+    display: flex; align-items: center; justify-content: center; transition: all .2s; }
+  .theme-toggle:hover { transform: scale(1.1); border-color: var(--accent); }
 
-  /* NAV */
-  .nav-tabs { display:flex; gap:0; padding:0 40px; border-bottom:1px solid rgba(255,255,255,.06);
-    background:rgba(10,14,26,.7); overflow-x:auto; }
+  .nav-tabs { display:flex; gap:0; padding:0 40px; border-bottom:1px solid var(--border);
+    background:var(--nav-bg); overflow-x:auto; }
   .nav-tab { padding:13px 18px; font-family:'Syne',sans-serif; font-size:11px; font-weight:700;
-    text-transform:uppercase; letter-spacing:1.5px; border:none; background:transparent; color:#475569;
+    text-transform:uppercase; letter-spacing:1.5px; border:none; background:transparent; color:var(--text-very-dim);
     cursor:pointer; border-bottom:2px solid transparent; transition:all .2s; margin-bottom:-1px; white-space:nowrap; }
-  .nav-tab.active { color:#38bdf8; border-bottom-color:#38bdf8; }
-  .nav-tab:hover:not(.active) { color:#94a3b8; }
-  .nav-tab .hist-count { display:inline-block; background:rgba(56,189,248,.15); color:#38bdf8;
-    border-radius:10px; padding:1px 7px; font-size:9px; margin-left:6px; }
+  .nav-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .nav-tab:hover:not(.active) { color:var(--text-muted); }
 
-  .main { padding:36px 40px; max-width:1400px; margin:0 auto; }
-  .hero { margin-bottom:32px; }
-  .hero h1 { font-family:'Syne',sans-serif; font-size:28px; font-weight:800; color:#fff; line-height:1.1; margin-bottom:5px; }
-  .hero p { color:#64748b; font-size:13px; }
+  .main { padding:40px; max-width:1400px; margin:0 auto; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px;
+    padding:28px; margin-bottom:20px; backdrop-filter:blur(10px); box-shadow:0 4px 24px var(--shadow); }
 
-  /* UPLOAD */
-  .upload-grid { display:grid; gap:18px; margin-bottom:20px; }
-  .upload-card { border:1.5px dashed rgba(255,255,255,.1); border-radius:16px; padding:20px;
-    background:rgba(255,255,255,.02); transition:all .25s; }
-  .upload-card.drag-over { border-color:#38bdf8; background:rgba(56,189,248,.04); }
-  .upload-card.has-data { border-color:rgba(52,211,153,.35); background:rgba(52,211,153,.025); }
-  .upload-card.loading-pdf { border-color:rgba(251,191,36,.35); background:rgba(251,191,36,.025); }
-  .upload-label { font-family:'Syne',sans-serif; font-size:11px; font-weight:700; text-transform:uppercase;
-    letter-spacing:2px; color:#64748b; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
-  .dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
-  .ftype-tabs { display:flex; gap:4px; margin-bottom:12px; }
-  .ftype-tab { padding:5px 12px; font-family:'DM Mono',monospace; font-size:11px; border-radius:6px;
-    border:1px solid rgba(255,255,255,.07); cursor:pointer; transition:all .2s; background:transparent; color:#475569; }
-  .ftype-tab.active { background:rgba(56,189,248,.08); border-color:rgba(56,189,248,.2); color:#38bdf8; }
-  .drop-area { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:80px; gap:8px; }
-  .drop-icon { font-size:26px; opacity:.22; }
-  .drop-text { font-size:12px; color:#475569; text-align:center; line-height:1.6; }
-  .drop-btn { background:rgba(56,189,248,.1); color:#38bdf8; border:1px solid rgba(56,189,248,.2);
-    border-radius:8px; padding:7px 16px; font-family:'DM Mono',monospace; font-size:12px; cursor:pointer; transition:all .2s; }
-  .drop-btn:hover { background:rgba(56,189,248,.18); }
-  .acct-input { width:100%; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);
-    border-radius:8px; padding:9px 13px; font-family:'DM Mono',monospace; font-size:13px; color:#e2e8f4;
-    outline:none; margin-bottom:12px; transition:border-color .2s; }
-  .acct-input:focus { border-color:rgba(56,189,248,.4); }
-  .acct-input::placeholder { color:#334155; }
-  .pdf-badge { display:inline-flex; align-items:center; gap:6px; background:rgba(251,191,36,.08);
-    border:1px solid rgba(251,191,36,.2); color:#fbbf24; border-radius:6px; padding:3px 9px; font-size:11px; margin-bottom:8px; }
-  .pdf-proc { display:flex; align-items:center; gap:10px; color:#fbbf24; font-size:12px; padding:14px 0; }
-  .spinner { width:15px; height:15px; border:2px solid rgba(251,191,36,.2); border-top-color:#fbbf24;
-    border-radius:50%; animation:spin .8s linear infinite; flex-shrink:0; }
+  .upload-zone { border:2px dashed rgba(56,189,248,.25); border-radius:12px; padding:32px; text-align:center;
+    cursor:pointer; transition:all .25s; background:rgba(56,189,248,.02); position:relative; }
+  .upload-zone:hover { border-color:var(--accent); background:rgba(56,189,248,.06); }
+  .upload-zone.active { border-color:#10b981; background:rgba(16,185,129,.06); }
+  .upload-zone.loading { border-color:#fbbf24; background:rgba(251,191,36,.06); cursor:wait; }
+  .upload-icon { font-size:40px; margin-bottom:12px; color:var(--accent); }
+  .upload-label { font-family:'Syne',sans-serif; font-size:15px; font-weight:700; color:var(--text); margin-bottom:6px; }
+  .upload-hint { font-size:11px; color:var(--text-dim); letter-spacing:.5px; }
+  .upload-badge { display:inline-block; background:rgba(16,185,129,.15); color:#10b981; padding:5px 14px;
+    border-radius:20px; font-size:11px; font-weight:600; margin-top:10px; border:1px solid rgba(16,185,129,.3); }
+  .upload-badge.pdf { background:rgba(239,68,68,.15); color:#f87171; border-color:rgba(239,68,68,.3); }
+
+  .btn { font-family:'Syne',sans-serif; font-size:12px; font-weight:700; text-transform:uppercase;
+    letter-spacing:1px; padding:10px 20px; border-radius:8px; border:none; cursor:pointer; transition:all .2s; }
+  .btn-primary { background:linear-gradient(135deg,#38bdf8 0%,#0ea5e9 100%); color:#fff; box-shadow:0 4px 14px rgba(56,189,248,.3); }
+  .btn-primary:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(56,189,248,.4); }
+  .btn-primary:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+  .btn-secondary { background:rgba(100,116,139,.15); color:var(--text-muted); border:1px solid rgba(100,116,139,.3); }
+  .btn-secondary:hover { background:rgba(100,116,139,.25); color:var(--text); }
+  .btn-danger { background:rgba(239,68,68,.15); color:#f87171; border:1px solid rgba(239,68,68,.3); }
+  .btn-danger:hover { background:rgba(239,68,68,.25); }
+  .btn-export { background:rgba(16,185,129,.15); color:#10b981; border:1px solid rgba(16,185,129,.3); }
+  .btn-export:hover { background:rgba(16,185,129,.25); }
+
+  .table-wrapper { overflow-x:auto; border-radius:10px; border:1px solid var(--border); }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  thead { background:var(--card-darker); position:sticky; top:0; z-index:10; }
+  th { padding:12px 16px; text-align:left; font-weight:700; font-size:10px; text-transform:uppercase;
+    letter-spacing:1.2px; color:var(--text-muted); border-bottom:1px solid var(--border); }
+  td { padding:11px 16px; border-bottom:1px solid var(--border-light); color: var(--text); }
+  tbody tr { transition:background .15s; }
+  tbody tr:hover { background:var(--hover-row); }
+  .tag { display:inline-block; padding:3px 10px; border-radius:12px; font-size:10px; font-weight:700; letter-spacing:.5px; }
+  .tag-matched { background:rgba(16,185,129,.15); color:#10b981; border:1px solid rgba(16,185,129,.3); }
+  .tag-matched-delayed { background:rgba(56,189,248,.15); color:var(--accent); border:1px solid rgba(56,189,248,.3); }
+  .tag-partial { background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3); }
+  .tag-mismatch { background:rgba(239,68,68,.15); color:#f87171; border:1px solid rgba(239,68,68,.3); }
+  .tag-unmatched-out { background:rgba(239,68,68,.1); color:#fca5a5; border:1px solid rgba(239,68,68,.25); }
+  .tag-unmatched-in { background:rgba(168,85,247,.1); color:#c4b5fd; border:1px solid rgba(168,85,247,.25); }
+  .tag-scale-error { background:rgba(168,85,247,.15); color:#a855f7; border:1px solid rgba(168,85,247,.3); }
+  .tag-coherent { background:rgba(16,185,129,.15); color:#10b981; border:1px solid rgba(16,185,129,.3); }
+  .tag-incoherent { background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3); }
+
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:24px; }
+  .stat-card { background:var(--card-solid); border:1px solid var(--border); border-radius:10px; padding:18px; }
+  .stat-value { font-family:'Syne',sans-serif; font-size:24px; font-weight:800; color:var(--text); margin-bottom:4px; }
+  .stat-label { font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:1px; }
+
   @keyframes spin { to { transform:rotate(360deg); } }
-  .prev-tbl { width:100%; border-collapse:collapse; font-size:11px; }
-  .prev-tbl th { text-align:left; color:#475569; padding:5px 7px; border-bottom:1px solid rgba(255,255,255,.06); font-weight:500; }
-  .prev-tbl td { padding:4px 7px; border-bottom:1px solid rgba(255,255,255,.03); color:#94a3b8; }
-  .prev-tbl td.neg { color:#f87171; }
-  .more-rows { font-size:11px; color:#334155; text-align:center; padding:6px; }
-  .data-ta { width:100%; min-height:100px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07);
-    border-radius:8px; padding:11px; font-family:'DM Mono',monospace; font-size:11px; color:#94a3b8;
-    outline:none; resize:vertical; line-height:1.6; transition:border-color .2s; }
-  .data-ta:focus { border-color:rgba(56,189,248,.3); }
-  .data-ta::placeholder { color:#1e293b; }
+  .loading { display:inline-block; width:16px; height:16px; border:2px solid rgba(56,189,248,.2);
+    border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; margin-right:8px; }
 
-  /* BUTTONS */
-  .analyze-sec { display:flex; flex-direction:column; align-items:center; gap:10px; margin:22px 0; }
-  .analyze-btn { background:linear-gradient(135deg,#38bdf8,#6366f1); color:#fff; border:none;
-    border-radius:12px; padding:14px 36px; font-family:'Syne',sans-serif; font-size:14px; font-weight:700;
-    cursor:pointer; transition:all .25s; box-shadow:0 4px 24px rgba(56,189,248,.2); }
-  .analyze-btn:hover:not(:disabled) { transform:translateY(-2px); box-shadow:0 8px 32px rgba(56,189,248,.3); }
-  .analyze-btn:disabled { opacity:.4; cursor:not-allowed; transform:none; }
-  .loading-bar { height:2px; background:rgba(255,255,255,.05); border-radius:2px; overflow:hidden; width:260px; }
-  .loading-fill { height:100%; background:linear-gradient(90deg,#38bdf8,#6366f1,#38bdf8);
-    background-size:200% 100%; animation:shimmer 1.5s linear infinite; }
-  @keyframes shimmer { from{background-position:200% 0} to{background-position:-200% 0} }
-  .loading-msg { font-size:11px; color:#475569; }
-  .add-btn { font-family:'DM Mono',monospace; font-size:11px; color:#38bdf8; background:transparent;
-    border:1px dashed rgba(56,189,248,.2); border-radius:8px; padding:7px 14px; cursor:pointer; transition:all .2s; }
-  .add-btn:hover { background:rgba(56,189,248,.06); }
-  .reset-btn { background:transparent; border:1px solid rgba(255,255,255,.08); color:#475569;
-    border-radius:8px; padding:9px 20px; font-family:'DM Mono',monospace; font-size:12px; cursor:pointer; transition:all .2s; }
-  .reset-btn:hover { border-color:rgba(255,255,255,.15); color:#94a3b8; }
+  .compte-section { display:flex; gap:16px; flex-wrap:wrap; align-items:end; margin-bottom:24px; }
+  .compte-input { flex:1; min-width:200px; }
+  .compte-input label { display:block; font-size:11px; color:var(--text-muted); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px; }
+  .compte-input input, .styled-input, .styled-select { width:100%; padding:10px 14px; background:var(--input-bg);
+    border:1px solid var(--border-input); border-radius:8px; color:var(--text); font-size:13px; font-family:'DM Mono',monospace; }
+  .compte-input input:focus, .styled-input:focus, .styled-select:focus { outline:none; border-color:var(--accent); }
+  .actions { display:flex; gap:12px; flex-wrap:wrap; margin-top:20px; }
+  .setting-row { display:flex; gap:16px; align-items:center; margin-bottom:16px; flex-wrap:wrap; }
+  .setting-row label { font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px; }
+  .setting-row input[type=number] { width:80px; padding:6px 10px; background:var(--input-bg);
+    border:1px solid var(--border-input); border-radius:6px; color:var(--text); font-family:'DM Mono',monospace; }
 
-  /* RESULTS COMMON */
-  .results { animation:fadeUp .4s ease; }
-  @keyframes fadeUp { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
-  .sum-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:22px; }
-  .stat-card { background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:14px; padding:16px 20px; }
-  .stat-lbl { font-size:10px; text-transform:uppercase; letter-spacing:1.5px; color:#475569; margin-bottom:8px; }
-  .stat-val { font-family:'Syne',sans-serif; font-size:24px; font-weight:800; }
-  .sv-green{color:#34d399} .sv-red{color:#f87171} .sv-blue{color:#38bdf8} .sv-purple{color:#a78bfa} .sv-yellow{color:#fbbf24}
-  .ai-box { background:rgba(99,102,241,.05); border:1px solid rgba(99,102,241,.15); border-radius:16px;
-    padding:20px 24px; margin-bottom:22px; position:relative; overflow:hidden; }
-  .ai-box::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,#6366f1,#38bdf8); }
-  .ai-box-title { font-family:'Syne',sans-serif; font-size:11px; font-weight:700; text-transform:uppercase;
-    letter-spacing:2px; color:#a78bfa; margin-bottom:12px; }
-  .ai-content { font-size:13px; line-height:1.8; color:#cbd5e1; white-space:pre-wrap; }
-  .sec-title { font-family:'Syne',sans-serif; font-size:12px; font-weight:700; text-transform:uppercase;
-    letter-spacing:1.5px; color:#64748b; margin-bottom:14px; display:flex; align-items:center; gap:10px; }
-  .sec-title::after { content:''; flex:1; height:1px; background:rgba(255,255,255,.05); }
-  .tbl { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:22px; }
-  .tbl th { text-align:left; padding:10px 13px; font-size:10px; text-transform:uppercase; letter-spacing:1.5px;
-    color:#475569; border-bottom:1px solid rgba(255,255,255,.07); font-weight:500; }
-  .tbl th.r { text-align:right; }
-  .tbl td { padding:10px 13px; border-bottom:1px solid rgba(255,255,255,.04); color:#94a3b8; vertical-align:middle; }
-  .tbl td.r { text-align:right; }
-  .tbl tr:hover td { background:rgba(255,255,255,.02); }
-  .tbl tr.total-row td { border-top:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.025); font-weight:600; }
-  .pill { display:inline-block; padding:3px 9px; border-radius:20px; font-size:10px; font-weight:600;
-    text-transform:uppercase; letter-spacing:.8px; }
-  .pill-ok { background:rgba(52,211,153,.1); color:#34d399; border:1px solid rgba(52,211,153,.2); }
-  .pill-warn { background:rgba(251,191,36,.1); color:#fbbf24; border:1px solid rgba(251,191,36,.2); }
-  .pill-err { background:rgba(248,113,113,.1); color:#f87171; border:1px solid rgba(248,113,113,.2); }
-  .pill-conf { background:rgba(52,211,153,.1); color:#34d399; border:1px solid rgba(52,211,153,.2); }
-  .pill-uni { background:rgba(248,113,113,.1); color:#f87171; border:1px solid rgba(248,113,113,.2); }
-  .pill-part { background:rgba(251,191,36,.1); color:#fbbf24; border:1px solid rgba(251,191,36,.2); }
-  .sub-tabs { display:flex; gap:4px; margin-bottom:16px; flex-wrap:wrap; }
-  .sub-tab { padding:7px 15px; font-family:'DM Mono',monospace; font-size:11px; border-radius:8px;
-    border:1px solid transparent; cursor:pointer; transition:all .2s; background:transparent; color:#475569; }
-  .sub-tab.active { background:rgba(56,189,248,.08); border-color:rgba(56,189,248,.2); color:#38bdf8; }
-  .sub-tab:hover:not(.active) { color:#94a3b8; }
-  .apos{color:#34d399} .aneg{color:#f87171}
-  .empty { text-align:center; color:#334155; padding:50px 0; font-size:13px; }
-  .empty-ok { text-align:center; color:#34d399; padding:50px 0; font-size:13px; }
+  .history-item, .balance-card { background:var(--card-solid); border:1px solid var(--border); border-radius:10px; padding:18px;
+    margin-bottom:12px; transition: all .2s; }
+  .history-item:hover, .balance-card:hover { border-color: var(--accent); }
+  .history-header { display:flex; justify-content:space-between; align-items:start; margin-bottom:10px; flex-wrap:wrap; gap:10px; }
+  .history-title { font-family:'Syne',sans-serif; font-weight:700; font-size:14px; color:var(--text); }
+  .history-date { font-size:11px; color:var(--text-dim); }
+  .history-comptes { font-size:12px; color:var(--text-muted); margin-bottom:8px; }
+  .history-stats { display:flex; gap:14px; flex-wrap:wrap; font-size:11px; color:var(--text-dim); margin-bottom:10px; }
+  .history-stats span { color:var(--text-muted); }
+  .history-stats strong { color:var(--text); font-weight:700; }
+  .history-actions { display:flex; gap:8px; }
+  .empty-history { text-align:center; padding:40px; color:var(--text-dim); font-size:13px; }
 
-  /* INTERCOMPTES */
-  .ic-sum { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:22px; }
-  .flow-arr { display:flex; align-items:center; gap:8px; font-size:12px; }
-  .flt-bar { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; align-items:center; }
-  .flt-lbl { font-size:11px; color:#475569; }
-  .flt-btn { padding:5px 12px; font-family:'DM Mono',monospace; font-size:11px; border-radius:6px;
-    border:1px solid rgba(255,255,255,.08); cursor:pointer; transition:all .2s; background:transparent; color:#64748b; }
-  .flt-btn.active { background:rgba(99,102,241,.1); border-color:rgba(99,102,241,.25); color:#a78bfa; }
-  .mx-wrap { margin-bottom:26px; overflow-x:auto; }
-  .mx-tbl { border-collapse:collapse; font-size:12px; }
-  .mx-tbl th { padding:10px 16px; font-size:10px; text-transform:uppercase; letter-spacing:1.2px;
-    color:#475569; font-weight:500; text-align:center; }
-  .mx-tbl th.rh { text-align:left; color:#64748b; }
-  .mx-tbl td { padding:10px 16px; border:1px solid rgba(255,255,255,.05); text-align:center; font-size:12px; }
-  .mx-tbl td.self { background:rgba(255,255,255,.02); color:#1e293b; }
-  .mx-tbl td.hf { color:#e2e8f4; font-weight:500; background:rgba(99,102,241,.05); }
-
-  /* QB CONCILIATION */
-  .qb-layout { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; }
-  .qb-card { border:1.5px solid rgba(255,255,255,.08); border-radius:16px; padding:22px; background:rgba(255,255,255,.02); }
-  .qb-title { font-family:'Syne',sans-serif; font-size:11px; font-weight:700; text-transform:uppercase;
-    letter-spacing:2px; margin-bottom:14px; display:flex; align-items:center; gap:8px; }
-  .qb-title.bank { color:#38bdf8; } .qb-title.qb { color:#a78bfa; }
-  .mrow { display:grid; grid-template-columns:1fr 1fr 28px; gap:8px; align-items:center; margin-bottom:8px; }
-  .mi { background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:7px;
-    padding:8px 12px; font-family:'DM Mono',monospace; font-size:12px; color:#e2e8f4; outline:none;
-    width:100%; transition:border-color .2s; }
-  .mi:focus { border-color:rgba(56,189,248,.35); }
-  .mi::placeholder { color:#334155; }
-  .rm-btn { background:none; border:none; color:#334155; cursor:pointer; font-size:16px;
-    transition:color .2s; padding:0; line-height:1; }
-  .rm-btn:hover { color:#f87171; }
-  .qb-note { font-size:11px; color:#475569; margin-top:12px; line-height:1.6; padding:10px 12px;
-    background:rgba(99,102,241,.04); border:1px solid rgba(99,102,241,.1); border-radius:8px; }
-  .qb-sum { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:22px; }
-  .bar-chart { margin-bottom:28px; }
-  .bar-row { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
-  .bar-mo { font-size:11px; color:#64748b; width:55px; flex-shrink:0; text-align:right; }
-  .bar-track { flex:1; height:26px; background:rgba(255,255,255,.03); border-radius:6px;
-    position:relative; overflow:visible; display:flex; align-items:center; }
-  .bar-fill { height:100%; border-radius:6px; transition:width .6s ease; }
-  .bar-ecart { font-size:11px; width:90px; flex-shrink:0; text-align:right; font-family:'DM Mono',monospace; }
-  .bar-leg { display:flex; gap:20px; margin-bottom:12px; }
-  .leg-item { display:flex; align-items:center; gap:6px; font-size:11px; color:#64748b; }
-  .leg-dot { width:10px; height:10px; border-radius:3px; }
-  .mo-chip { display:inline-block; padding:3px 10px; border-radius:6px; font-size:11px;
-    background:rgba(56,189,248,.07); border:1px solid rgba(56,189,248,.15); color:#38bdf8; }
-  .ez{color:#34d399;font-weight:600} .ep{color:#fbbf24;font-weight:600} .en{color:#f87171;font-weight:600}
-
-  /* HISTORY */
-  .hist-toolbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:12px; }
-  .hist-filters { display:flex; gap:6px; flex-wrap:wrap; }
-  .hist-flt { padding:6px 14px; font-family:'DM Mono',monospace; font-size:11px; border-radius:8px;
-    border:1px solid rgba(255,255,255,.08); cursor:pointer; transition:all .2s; background:transparent; color:#64748b; }
-  .hist-flt.active { background:rgba(56,189,248,.08); border-color:rgba(56,189,248,.2); color:#38bdf8; }
-  .hist-flt:hover:not(.active) { color:#94a3b8; }
-  .hist-actions { display:flex; gap:8px; }
-  .hist-act-btn { padding:7px 14px; font-family:'DM Mono',monospace; font-size:11px; border-radius:8px;
-    border:1px solid rgba(255,255,255,.1); cursor:pointer; transition:all .2s; background:transparent; color:#64748b; }
-  .hist-act-btn:hover { color:#e2e8f4; border-color:rgba(255,255,255,.2); }
-  .hist-act-btn.danger:hover { color:#f87171; border-color:rgba(248,113,113,.3); }
-  .hist-act-btn.export { color:#34d399; border-color:rgba(52,211,153,.25); }
-  .hist-act-btn.export:hover { background:rgba(52,211,153,.06); }
-
-  .hist-grid { display:flex; flex-direction:column; gap:10px; }
-  .hist-card { background:rgba(255,255,255,.025); border:1px solid rgba(255,255,255,.07); border-radius:14px;
-    padding:18px 20px; transition:all .2s; cursor:pointer; position:relative; }
-  .hist-card:hover { border-color:rgba(56,189,248,.2); background:rgba(56,189,248,.03); }
-  .hist-card.selected { border-color:#38bdf8; background:rgba(56,189,248,.05); }
-  .hist-card.compare-a { border-color:#38bdf8; background:rgba(56,189,248,.05); }
-  .hist-card.compare-b { border-color:#a78bfa; background:rgba(167,139,250,.05); }
-  .hist-card-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-  .hist-card-meta { display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
-  .hist-type-pill { padding:3px 10px; border-radius:20px; font-size:10px; font-weight:700;
-    text-transform:uppercase; letter-spacing:1px; }
-  .ht-rapp { background:rgba(56,189,248,.1); color:#38bdf8; border:1px solid rgba(56,189,248,.2); }
-  .ht-ic { background:rgba(167,139,250,.1); color:#a78bfa; border:1px solid rgba(167,139,250,.2); }
-  .ht-qb { background:rgba(52,211,153,.1); color:#34d399; border:1px solid rgba(52,211,153,.2); }
-  .hist-date { font-size:11px; color:#475569; }
-  .hist-title { font-family:'Syne',sans-serif; font-size:14px; font-weight:700; color:#e2e8f4; margin-bottom:6px; }
-  .hist-kpis { display:flex; gap:16px; flex-wrap:wrap; }
-  .hist-kpi { font-size:11px; color:#64748b; }
-  .hist-kpi span { color:#94a3b8; font-weight:500; }
-  .hist-card-actions { display:flex; gap:6px; flex-shrink:0; }
-  .hca-btn { padding:5px 10px; font-family:'DM Mono',monospace; font-size:10px; border-radius:6px;
-    border:1px solid rgba(255,255,255,.08); cursor:pointer; background:transparent; color:#64748b; transition:all .2s; white-space:nowrap; }
-  .hca-btn:hover { color:#e2e8f4; }
-  .hca-btn.del:hover { color:#f87171; border-color:rgba(248,113,113,.3); }
-  .hca-btn.cmp { color:#a78bfa; border-color:rgba(167,139,250,.2); }
-  .hca-btn.cmp:hover { background:rgba(167,139,250,.08); }
-  .hca-btn.view { color:#38bdf8; border-color:rgba(56,189,248,.2); }
-  .hca-btn.view:hover { background:rgba(56,189,248,.08); }
-
-  .compare-banner { background:rgba(167,139,250,.07); border:1px solid rgba(167,139,250,.2);
-    border-radius:12px; padding:14px 18px; margin-bottom:20px; display:flex; align-items:center;
-    justify-content:space-between; gap:12px; flex-wrap:wrap; }
-  .compare-banner-txt { font-size:13px; color:#cbd5e1; }
-  .compare-banner-txt strong { color:#a78bfa; }
-  .compare-do-btn { background:linear-gradient(135deg,#a78bfa,#6366f1); color:#fff; border:none;
-    border-radius:8px; padding:8px 18px; font-family:'Syne',sans-serif; font-size:12px; font-weight:700;
-    cursor:pointer; transition:all .2s; }
-  .compare-do-btn:hover { transform:translateY(-1px); }
-
-  .compare-panel { animation:fadeUp .4s ease; }
-  .compare-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:24px; }
-  .cmp-card { background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.07); border-radius:14px; padding:20px; }
-  .cmp-card.a { border-color:rgba(56,189,248,.2); }
-  .cmp-card.b { border-color:rgba(167,139,250,.2); }
-  .cmp-card-title { font-family:'Syne',sans-serif; font-size:12px; font-weight:700; text-transform:uppercase;
-    letter-spacing:1.5px; margin-bottom:14px; }
-  .cmp-card.a .cmp-card-title { color:#38bdf8; }
-  .cmp-card.b .cmp-card-title { color:#a78bfa; }
-  .cmp-row { display:flex; justify-content:space-between; align-items:center; padding:7px 0;
-    border-bottom:1px solid rgba(255,255,255,.04); font-size:12px; }
-  .cmp-row:last-child { border-bottom:none; }
-  .cmp-key { color:#64748b; }
-  .cmp-val { color:#e2e8f4; font-weight:500; }
-
-  .no-hist { display:flex; flex-direction:column; align-items:center; justify-content:center;
-    padding:80px 0; gap:16px; color:#334155; }
-  .no-hist-icon { font-size:48px; opacity:.3; }
-  .no-hist-txt { font-size:13px; text-align:center; line-height:1.8; }
-
-  ::-webkit-scrollbar { width:4px; height:4px; }
-  ::-webkit-scrollbar-thumb { background:rgba(255,255,255,.1); border-radius:4px; }
+  /* SOLDES */
+  .balance-info { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 14px;
+    background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.2); border-radius: 8px;
+    font-size: 11px; color: #10b981; font-weight: 600; }
+  .balance-info.warning { background: rgba(251,191,36,.08); border-color: rgba(251,191,36,.2); color: #fbbf24; }
+  .balance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 12px; }
+  .balance-item { background: var(--input-bg); padding: 10px 14px; border-radius: 6px; border: 1px solid var(--border-input); }
+  .balance-item-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .balance-item-value { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 14px; color: var(--text); }
+  .balance-formula { margin-top: 10px; padding: 10px 14px; background: var(--input-bg); border-radius: 6px;
+    font-size: 11px; color: var(--text-muted); font-family: 'DM Mono', monospace; }
 `;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────────────────────────────────────
-const MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
-const HIST_KEY = "rapproche-history";
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS — Nettoyage montants/dates
+// ═══════════════════════════════════════════════════════════════════════════
+const cleanAmount = (val) => {
+  if (typeof val === "number") return val;
+  let str = String(val || "").replace(/\s/g, "");
+  str = str.replace(/[$€£¥]/g, "");
+  if (str.includes(",") && str.includes(".")) {
+    str = str.replace(/,/g, "");
+  } else if (str.includes(",")) {
+    const parts = str.split(",");
+    if (parts[1] && parts[1].length <= 2) str = str.replace(",", ".");
+    else str = str.replace(/,/g, "");
+  }
+  const match = str.match(/-?\d+(\.\d+)?/);
+  return match ? parseFloat(match[0]) : 0;
+};
 
-function parseCSV(text) {
-  const lines = text.trim().split("\n").filter(l => l.trim());
+const formatAmount = (val) => {
+  const num = typeof val === "number" ? val : cleanAmount(val);
+  return new Intl.NumberFormat("fr-CA", { style: "currency", currency: "CAD" }).format(num);
+};
+
+const normalizeDate = (str) => {
+  if (!str) return "";
+  const s = String(str).trim();
+  if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const slashMatch = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (slashMatch) {
+    let [, a, b, y] = slashMatch;
+    if (y.length === 2) y = "20" + y;
+    // Smart format detection: if a > 12, it's D/M/Y (European)
+    // If b > 12, it's M/D/Y (North American — QuickBooks Canada)
+    // Default to M/D/Y (most common in Canadian accounting exports)
+    let day, month;
+    if (parseInt(a) > 12) { day = a; month = b; }
+    else if (parseInt(b) > 12) { day = b; month = a; }
+    else { day = b; month = a; } // ambiguous → default M/D/Y
+    return `${y}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  return s;
+};
+
+// 🆕 Détection auto du séparateur (virgule, point-virgule, tab)
+const detectSeparator = (lines) => {
+  const counts = { ",": 0, ";": 0, "\t": 0 };
+  for (const line of lines) {
+    // Compter seulement les séparateurs HORS guillemets
+    let inQ = false;
+    for (const c of line) {
+      if (c === '"') { inQ = !inQ; continue; }
+      if (inQ) continue;
+      if (c === ",") counts[","]++;
+      else if (c === ";") counts[";"]++;
+      else if (c === "\t") counts["\t"]++;
+    }
+  }
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+};
+
+// 🆕 Découpe une ligne CSV en respectant les guillemets (gère "1,279.44")
+const splitCSVLine = (line, sep) => {
+  const result = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      // Guillemet échappé ("")
+      if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; continue; }
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (c === sep && !inQuotes) {
+      result.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  result.push(cur);
+  return result.map((v) => v.trim());
+};
+
+const isDateLike = (s) => /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$|^\d{4}-\d{2}-\d{2}$|^\d{8}$/.test(String(s || "").trim());
+
+const parseCSV = (text) => {
+  text = text.replace(/^\uFEFF/, "");
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
   if (!lines.length) return [];
-  const header = lines[0].split(/[,;\t]/);
-  return lines.slice(1).map(line => {
-    const cols = line.split(/[,;\t]/);
-    const obj = {};
-    header.forEach((h, i) => { obj[h.trim()] = (cols[i] || "").trim(); });
-    return obj;
-  });
-}
-const gAmt = row => { const k = Object.keys(row).find(k => /montant|amount|debit|credit|solde/i.test(k)); return k ? parseFloat(row[k].replace(",",".")) || 0 : 0; };
-const gDate = row => { const k = Object.keys(row).find(k => /date|day|jour/i.test(k)); return k ? row[k] : ""; };
-const gLabel = row => { const k = Object.keys(row).find(k => /libelle|label|description|ref|memo|narration/i.test(k)); return k ? row[k] : Object.values(row).slice(0,2).join(" - "); };
-function fmt(n) { if (n === undefined || n === null || isNaN(n)) return "—"; return new Intl.NumberFormat("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2}).format(n); }
-function fileToBase64(file) { return new Promise((res,rej) => { const r = new FileReader(); r.onload = e => res(e.target.result.split(",")[1]); r.onerror = rej; r.readAsDataURL(file); }); }
-function nowStr() { return new Date().toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}); }
 
-const ACCT_COLORS = [
-  {bg:"rgba(56,189,248,.08)",bd:"rgba(56,189,248,.25)",tx:"#38bdf8"},
-  {bg:"rgba(52,211,153,.08)",bd:"rgba(52,211,153,.25)",tx:"#34d399"},
-  {bg:"rgba(167,139,250,.08)",bd:"rgba(167,139,250,.25)",tx:"#a78bfa"},
-  {bg:"rgba(251,191,36,.08)",bd:"rgba(251,191,36,.25)",tx:"#fbbf24"},
-  {bg:"rgba(248,113,113,.08)",bd:"rgba(248,113,113,.25)",tx:"#f87171"},
-];
+  // 🆕 Détecter le séparateur (hors guillemets)
+  const sep = detectSeparator(lines.slice(0, 5));
 
-// ⚡ Parse robustement un JSON renvoyé par Claude (tolère markdown, texte avant/après)
-function safeParseJSON(text) {
-  if (!text) throw new Error("Réponse vide de Claude");
-  let cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-  const firstBrace = cleaned.indexOf("{");
-  const lastBrace = cleaned.lastIndexOf("}");
-  if (firstBrace === -1 || lastBrace === -1) {
-    throw new Error("Pas de JSON trouvé dans la réponse");
+  const headerKeywords = /\b(date|amount|montant|description|libell|memo|m[eé]mo|debit|credit|d[eé]p[oô]t|paiement|transaction|posted)\b/i;
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(15, lines.length); i++) {
+    const fields = splitCSVLine(lines[i], sep);
+    if (fields.filter((f) => headerKeywords.test(f)).length >= 2) {
+      headerIdx = i;
+      break;
+    }
   }
-  cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+
+  // 🆕 Pas de header trouvé → format QuickBooks sans en-tête
+  if (headerIdx === -1) {
+    const firstRow = splitCSVLine(lines[0], sep);
+    if (firstRow.length >= 5 && isDateLike(firstRow[0])) {
+      const qbHeaders = ["Date", "Numéro", "Payeur", "Description", "Debit", "Credit", "Statut", "Cat", "Solde", "Type", "Compte", "Notes"];
+      return lines.map((line) => {
+        const vals = splitCSVLine(line, sep);
+        const row = {};
+        qbHeaders.forEach((h, i) => (row[h] = vals[i] || ""));
+        row["Libellé"] = [row.Payeur, row.Description].filter((x) => x && x !== "Annulé").join(" - ");
+        return row;
+      }).filter((r) => isDateLike(r.Date));
+    }
+    return [];
+  }
+
+  const headers = splitCSVLine(lines[headerIdx], sep);
+  return lines.slice(headerIdx + 1)
+    .map((line) => {
+      const vals = splitCSVLine(line, sep);
+      const row = {};
+      headers.forEach((h, i) => (row[h] = vals[i] || ""));
+      return row;
+    })
+    .filter((row) => {
+      const firstVal = Object.values(row)[0] || "";
+      return firstVal && !headerKeywords.test(firstVal.substring(0, 30));
+    });
+};
+
+const findKey = (row, patterns) => {
+  for (const key of Object.keys(row)) {
+    const k = key.trim().toLowerCase();
+    for (const p of patterns) {
+      if (k === p.toLowerCase() || k.includes(p.toLowerCase())) return key;
+    }
+  }
+  return null;
+};
+
+const gDate = (row) => {
+  const k = findKey(row, ["Date Posted", "Posting Date", "Transaction Date", "Date"]);
+  return k ? normalizeDate(row[k]) : "";
+};
+
+const gLabel = (row) => {
+  const k = findKey(row, ["Description", "Libellé", "Libelle", "Label", "Memo", "Mémo"]);
+  return k ? String(row[k] || "").trim() : "";
+};
+
+const getAmount = (row) => {
+  const k = findKey(row, ["Transaction Amount", "Montant", "Amount"]);
+  if (k) return cleanAmount(row[k]);
+  const dk = findKey(row, ["Debit", "Paiement", "Retrait"]);
+  const ck = findKey(row, ["Credit", "Dépôt", "Depot"]);
+  if (dk && ck) return cleanAmount(row[ck] || 0) - cleanAmount(row[dk] || 0);
+  return 0;
+};
+
+// 🆕 Récupère la valeur de la colonne Solde d'une ligne
+const getSolde = (row) => {
+  const k = findKey(row, ["Solde", "Balance", "Running Balance"]);
+  return k ? cleanAmount(row[k]) : null;
+};
+
+// 🆕 Cherche les soldes dans le TEXTE BRUT du CSV (ligne de titre type
+// "Solde bancaire: 300.00 ... Solde de fermeture: $28,211.43")
+const extractSoldesFromHeader = (text) => {
+  if (!text) return null;
+  // Regarder seulement les 5 premières lignes (la ligne de titre)
+  const head = text.replace(/^\uFEFF/, "").split(/\r?\n/).slice(0, 5).join(" ");
+
+  // Patterns pour solde d'ouverture
+  const ouvMatch = head.match(/solde\s+(?:bancaire|d['e\s]?ouverture|initial|d['e\s]?d[ée]but)\s*:?\s*\$?\s*([\d\s.,]+)/i);
+  // Patterns pour solde de fermeture
+  const fermMatch = head.match(/solde\s+(?:de\s+)?(?:fermeture|final|de\s+fin|de\s+cl[ôo]ture)\s*:?\s*\$?\s*([\d\s.,]+)/i);
+
+  if (!ouvMatch && !fermMatch) return null;
+  return {
+    ouverture: ouvMatch ? cleanAmount(ouvMatch[1]) : null,
+    fermeture: fermMatch ? cleanAmount(fermMatch[1]) : null,
+  };
+};
+
+// 🆕 Calcule soldes ouverture/fermeture depuis la colonne Solde des données
+const computeSoldesFromData = (data) => {
+  if (!data || !data.length) return null;
+  const first = data[0];
+  const last = data[data.length - 1];
+  const soldeFirst = getSolde(first);
+  const soldeLast = getSolde(last);
+  // Totaux débits/crédits (toujours calculables)
+  let totalDebits = 0, totalCredits = 0;
+  data.forEach((row) => {
+    const m = getAmount(row);
+    if (m < 0) totalDebits += Math.abs(m);
+    else totalCredits += m;
+  });
+  if (soldeFirst == null || soldeLast == null) {
+    return { ouverture: null, fermeture: null,
+      totalDebits: +totalDebits.toFixed(2), totalCredits: +totalCredits.toFixed(2) };
+  }
+  const ouverture = +(soldeFirst - getAmount(first)).toFixed(2);
+  const fermeture = +soldeLast.toFixed(2);
+  return {
+    ouverture, fermeture,
+    totalDebits: +totalDebits.toFixed(2),
+    totalCredits: +totalCredits.toFixed(2),
+  };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLAUDE API
+// ═══════════════════════════════════════════════════════════════════════════
+// 🆕 Extracteur JSON ultra-robuste — balanced brace matching, gère les chaînes échappées
+const extractJSON = (text) => {
+  if (!text) throw new Error("Réponse API vide");
+  // Enlever blocs markdown ```json et ```
+  let cleaned = text.replace(/```(?:json)?/gi, "").trim();
+
+  // Stratégie 1 : parse direct
+  try { return JSON.parse(cleaned); } catch {}
+
+  // Stratégie 2 : trouver le premier { ou [ et matcher avec balanced braces
+  const firstObj = cleaned.indexOf("{");
+  const firstArr = cleaned.indexOf("[");
+  let start;
+  if (firstObj === -1 && firstArr === -1) {
+    console.error("Réponse Claude sans JSON détecté:", cleaned);
+    throw new Error("Pas de JSON dans la réponse : " + cleaned.substring(0, 200));
+  }
+  if (firstObj === -1) start = firstArr;
+  else if (firstArr === -1) start = firstObj;
+  else start = Math.min(firstObj, firstArr);
+
+  const openChar = cleaned[start];
+  const closeChar = openChar === "{" ? "}" : "]";
+
+  // Balanced brace matching (ignore les chars dans les strings)
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < cleaned.length; i++) {
+    const c = cleaned[i];
+    if (escape) { escape = false; continue; }
+    if (c === "\\") { escape = true; continue; }
+    if (c === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === openChar) depth++;
+    else if (c === closeChar) {
+      depth--;
+      if (depth === 0) {
+        const jsonStr = cleaned.substring(start, i + 1);
+        try {
+          return JSON.parse(jsonStr);
+        } catch (e) {
+          console.error("JSON extrait mais invalide:", jsonStr);
+          console.error("Texte brut reçu:", cleaned);
+          throw new Error("JSON extrait mais invalide à la position " + e.message);
+        }
+      }
+    }
+  }
+  // Si on arrive ici, c'est que les braces ne sont pas équilibrées (réponse tronquée)
+  console.error("Réponse Claude tronquée (max_tokens dépassé ?):", cleaned);
+  throw new Error("Réponse tronquée — max_tokens probablement dépassé. Reçu " + cleaned.length + " caractères.");
+};
+
+const callClaude = async (prompt, maxTokens = 4000) => {
+  let resp;
   try {
-    return JSON.parse(cleaned);
+    resp = await fetch("/api/claude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: maxTokens,
+        // Instruction système stricte pour forcer le JSON pur
+        system: "Tu es un parseur de données. Tu réponds UNIQUEMENT avec du JSON valide. Aucun texte avant, aucun texte après, aucun bloc markdown. Ta réponse commence par { ou [ et se termine par } ou ].",
+        messages: [
+          { role: "user", content: prompt },
+        ],
+      }),
+    });
   } catch (e) {
-    console.error("JSON brut reçu:", cleaned.slice(0, 500) + "...");
-    throw new Error(`JSON mal formé: ${e.message}. La réponse de Claude a peut-être été tronquée — essaie avec moins de données.`);
+    throw new Error("Connexion au serveur échouée : " + e.message);
   }
-}
 
-// ⚡ MODIFIÉ : appel Claude via notre proxy serverless (sécurisé)
-async function callClaude(messages, maxTokens = 4000) {
-  const res = await fetch("/api/claude", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, max_tokens: maxTokens })
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    console.error("API error:", err);
-    throw new Error(`API error: ${res.status}`);
+  let data;
+  try {
+    data = await resp.json();
+  } catch (e) {
+    throw new Error(`Réponse serveur illisible (HTTP ${resp.status})`);
   }
-  const data = await res.json();
-  return data.content?.map(b => b.text || "").join("") || "";
-}
 
-async function extractPDFTransactions(b64, accountName) {
-  const text = await callClaude([{role:"user",content:[
-    {type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}},
-    {type:"text",text:`Relevé bancaire pour "${accountName}". Extrais TOUTES les transactions. Retourne UNIQUEMENT ce JSON (sans markdown) :\n{"transactions":[{"date":"YYYY-MM-DD","label":"libellé","amount":0}]}\nDébits=négatif, crédits=positif.`}
-  ]}]);
-  const parsed = safeParseJSON(text);
-  return (parsed.transactions||[]).map(t=>({date:t.date||"",libelle:t.label||"",montant:String(t.amount||0)}));
-}
-function defaultMonths() {
-  const now = new Date(); const months = [];
-  for (let i=5;i>=0;i--) { const d = new Date(now.getFullYear(),now.getMonth()-i,1); months.push({id:Date.now()+i,label:`${MONTHS_FR[d.getMonth()]} ${d.getFullYear()}`,bankSolde:"",qbSolde:""}); }
-  return months;
-}
+  if (!resp.ok) {
+    const msg = data?.error?.message || data?.error || JSON.stringify(data);
+    console.error("Erreur API Claude:", data);
+    throw new Error(`API erreur (HTTP ${resp.status}) : ${msg}`);
+  }
+  if (data?.error) {
+    console.error("Erreur dans la réponse Claude:", data);
+    throw new Error(`API erreur : ${data.error.message || data.error}`);
+  }
+  if (!data?.content || !Array.isArray(data.content) || data.content.length === 0) {
+    console.error("Réponse Claude sans contenu:", data);
+    throw new Error("L'API a répondu sans contenu. Vérifiez votre clé API et votre crédit Anthropic.");
+  }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HISTORY STORAGE — ⚡ MODIFIÉ : utilise localStorage du navigateur
-// ─────────────────────────────────────────────────────────────────────────────
-async function loadHistory() {
-  try {
-    const raw = localStorage.getItem(HIST_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-async function saveHistory(hist) {
-  try {
-    localStorage.setItem(HIST_KEY, JSON.stringify(hist));
-  } catch(e) { console.error("Storage error:", e); }
-}
+  const text = data.content[0]?.text || "";
+  if (!text) {
+    console.error("Bloc de contenu vide:", data);
+    throw new Error("L'API a renvoyé un contenu vide. stop_reason: " + (data.stop_reason || "inconnu"));
+  }
 
-// Export helpers
-function exportCSV(hist) {
-  const rows = [["ID","Type","Titre","Date","Détail 1","Détail 2","Détail 3"]];
-  hist.forEach(h => {
-    if (h.type==="rapprochement") rows.push([h.id,h.type,h.title,h.date,`Taux: ${h.summary?.taux_rapprochement}%`,`Rapprochées: ${h.summary?.matched}`,`Écart: ${fmt(h.summary?.ecart)} €`]);
-    else if (h.type==="intercomptes") rows.push([h.id,h.type,h.title,h.date,`Flux: ${h.summary?.total_flows}`,`Confirmés: ${h.summary?.confirmed}`,`Volume: ${fmt(h.summary?.total_volume)} €`]);
-    else rows.push([h.id,h.type,h.title,h.date,`Mois: ${h.summary?.months}`,`Problématiques: ${h.summary?.problems}`,`Écart moy: ${fmt(h.summary?.avg_ecart)} €`]);
+  return text;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXTRACTION PDF
+// ═══════════════════════════════════════════════════════════════════════════
+const extractPDFText = async (file) => {
+  const lib = await loadPdfJs();
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
+  let fullText = "";
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    const linesByY = {};
+    textContent.items.forEach((item) => {
+      const y = Math.round(item.transform[5]);
+      if (!linesByY[y]) linesByY[y] = [];
+      linesByY[y].push({ x: item.transform[4], text: item.str });
+    });
+    const sortedLines = Object.entries(linesByY)
+      .sort((a, b) => parseInt(b[0]) - parseInt(a[0]))
+      .map(([, items]) => items.sort((a, b) => a.x - b.x).map((i) => i.text).join(" "));
+    fullText += `\n--- PAGE ${pageNum} ---\n` + sortedLines.join("\n");
+  }
+  return fullText;
+};
+
+// 🆕 Extraction des SOLDES + transactions en un seul appel
+const parsePDFViaClaude = async (rawText, sourceHint = "") => {
+  const prompt = `Tu es un parseur de relevés bancaires. Réponds UNIQUEMENT en JSON valide, sans aucun texte avant ou après.
+
+Texte du PDF${sourceHint ? ` (${sourceHint})` : ""}:
+${rawText.slice(0, 18000)}
+
+Extrais et retourne ce JSON exact (remplir les valeurs depuis le PDF) :
+
+{"metadata":{"compte":"","banque":"","dateDebut":"YYYY-MM-DD","dateFin":"YYYY-MM-DD"},"soldes":{"ouverture":0,"totalDebits":0,"totalCredits":0,"fermeture":0},"transactions":[{"Date":"YYYY-MM-DD","Libellé":"texte","Montant":0}]}
+
+RÈGLES :
+- Montant POSITIF pour crédit/dépôt, NÉGATIF pour débit/retrait
+- IGNORE "Opening balance", "Closing totals", "Number of items processed"
+- Si solde introuvable : mettre null (pas 0)
+- Date au format YYYY-MM-DD (déduire l'année de la période si nécessaire)
+- N'AJOUTE AUCUN texte explicatif, JSON pur uniquement`;
+
+  const txt = await callClaude(prompt, 8000);
+  const parsed = extractJSON(txt);
+  return {
+    transactions: parsed.transactions || [],
+    soldes: parsed.soldes || null,
+    metadata: parsed.metadata || null,
+  };
+};
+
+const parseFile = async (file, compteName = "") => {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".pdf")) {
+    const rawText = await extractPDFText(file);
+    if (!rawText.trim() || rawText.length < 100) {
+      throw new Error("Le PDF semble vide ou scanné. OCR requis pour les PDF scannés.");
+    }
+    const result = await parsePDFViaClaude(rawText, compteName);
+    return { data: result.transactions, soldes: result.soldes, metadata: result.metadata, rawText: null };
+  } else if (name.endsWith(".csv") || name.endsWith(".txt")) {
+    const text = await file.text();
+    return { data: parseCSV(text), soldes: null, metadata: null, rawText: text };
+  } else {
+    throw new Error(`Type non supporté : ${file.name}`);
+  }
+};
+
+// 🆕 Vérification cohérence comptable : Ouverture − Débits + Crédits = Fermeture
+const verifySoldes = (soldes) => {
+  if (!soldes || soldes.ouverture == null || soldes.fermeture == null) return null;
+  const debits = soldes.totalDebits || 0;
+  const credits = soldes.totalCredits || 0;
+  const expected = soldes.ouverture - debits + credits;
+  const ecart = +(soldes.fermeture - expected).toFixed(2);
+  return {
+    expected: +expected.toFixed(2),
+    ecart,
+    coherent: Math.abs(ecart) < 0.01,
+  };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DÉTECTION INTERCOMPTES DÉTERMINISTE (date réception ≥ date envoi)
+// ═══════════════════════════════════════════════════════════════════════════
+const daysBetween = (d1, d2) =>
+  Math.round((new Date(d2).getTime() - new Date(d1).getTime()) / (1000 * 60 * 60 * 24));
+
+const looksLikeIntercompte = (label) => {
+  if (!label) return false;
+  const l = label.toLowerCase();
+  return /\binter[\s-]?compte\b/.test(l) || /\btf\s+[0-9#]/.test(l) || /transfert?\s+(inter|entre)/.test(l);
+};
+
+const buildFluxRow = (sent, rcv, status) => ({
+  Date: sent.date,
+  "Compte source": sent.compte,
+  "Date réception": rcv.date,
+  "Compte destination": rcv.compte,
+  Montant: sent.absAmount,
+  "Délai (jours)": daysBetween(sent.date, rcv.date),
+  "Libellé source": sent.label,
+  "Libellé destination": rcv.label,
+  Statut: status,
+});
+
+const buildUnmatchedRow = (tx, status) => ({
+  Date: tx.isDebit ? tx.date : "—",
+  "Compte source": tx.isDebit ? tx.compte : "(non identifié)",
+  "Date réception": tx.isDebit ? "—" : tx.date,
+  "Compte destination": tx.isDebit ? "(non identifié)" : tx.compte,
+  Montant: tx.absAmount,
+  "Délai (jours)": "—",
+  "Libellé source": tx.isDebit ? tx.label : "—",
+  "Libellé destination": tx.isDebit ? "—" : tx.label,
+  Statut: status,
+});
+
+const pickBestCandidate = (candidates, sent) =>
+  candidates.sort((a, b) => {
+    const dA = daysBetween(sent.date, a.date);
+    const dB = daysBetween(sent.date, b.date);
+    if (dA !== dB) return dA - dB;
+    const scoreA = looksLikeIntercompte(a.label) ? 1 : 0;
+    const scoreB = looksLikeIntercompte(b.label) ? 1 : 0;
+    return scoreB - scoreA;
+  })[0];
+
+const detectIntercomptesLocally = (comptes, options = {}) => {
+  const { dateTolerance = 7, amountTolerance = 0.01, detectScaleErrors = true } = options;
+  const allTxs = [];
+  comptes.forEach((compte) => {
+    compte.data.forEach((row, idx) => {
+      const date = gDate(row);
+      const amount = getAmount(row);
+      if (!date || amount === 0) return;
+      allTxs.push({
+        compte: compte.nom, idx, date, amount,
+        absAmount: Math.abs(amount), label: gLabel(row), isDebit: amount < 0,
+      });
+    });
   });
-  const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
-  const blob = new Blob([csv],{type:"text/csv"});
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "historique-rapprochement.csv"; a.click();
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN APP (inchangé)
-// ─────────────────────────────────────────────────────────────────────────────
+  const matched = new Set();
+  const flux = [];
+  const debits = allTxs.filter((t) => t.isDebit).sort((a, b) => a.date.localeCompare(b.date));
+
+  for (const sent of debits) {
+    const key = `${sent.compte}|${sent.idx}`;
+    if (matched.has(key)) continue;
+
+    let candidates = allTxs.filter((rcv) => {
+      if (rcv.compte === sent.compte) return false;
+      if (rcv.amount <= 0) return false;
+      if (matched.has(`${rcv.compte}|${rcv.idx}`)) return false;
+      const dDelta = daysBetween(sent.date, rcv.date);
+      if (dDelta < 0 || dDelta > dateTolerance) return false;
+      return Math.abs(rcv.absAmount - sent.absAmount) <= amountTolerance;
+    });
+
+    if (candidates.length === 0 && detectScaleErrors) {
+      candidates = allTxs.filter((rcv) => {
+        if (rcv.compte === sent.compte) return false;
+        if (rcv.amount <= 0) return false;
+        if (matched.has(`${rcv.compte}|${rcv.idx}`)) return false;
+        const dDelta = daysBetween(sent.date, rcv.date);
+        if (dDelta < 0 || dDelta > dateTolerance) return false;
+        const ratio = sent.absAmount / rcv.absAmount;
+        return (ratio > 95 && ratio < 105) || (ratio > 0.0095 && ratio < 0.0105);
+      });
+      if (candidates.length > 0) {
+        const best = pickBestCandidate(candidates, sent);
+        matched.add(key);
+        matched.add(`${best.compte}|${best.idx}`);
+        flux.push(buildFluxRow(sent, best, "scale_error"));
+        continue;
+      }
+    }
+
+    if (candidates.length === 0) {
+      if (looksLikeIntercompte(sent.label)) flux.push(buildUnmatchedRow(sent, "unmatched_sent"));
+      continue;
+    }
+
+    const best = pickBestCandidate(candidates, sent);
+    matched.add(key);
+    matched.add(`${best.compte}|${best.idx}`);
+    const delta = daysBetween(sent.date, best.date);
+    flux.push(buildFluxRow(sent, best, delta === 0 ? "matched" : "matched_delayed"));
+  }
+
+  for (const rcv of allTxs.filter((t) => !t.isDebit && t.amount > 0)) {
+    if (matched.has(`${rcv.compte}|${rcv.idx}`)) continue;
+    if (looksLikeIntercompte(rcv.label)) flux.push(buildUnmatchedRow(rcv, "unmatched_received"));
+  }
+
+  flux.sort((a, b) => a.Date.localeCompare(b.Date));
+  return flux;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HISTORIQUE — localStorage
+// ═══════════════════════════════════════════════════════════════════════════
+const HISTORY_KEY = "rapproche_history_v1";
+const MAX_HISTORY = 50;
+const loadHistory = () => { try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; } };
+const saveHistory = (h) => { try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, MAX_HISTORY))); } catch {} };
+const addToHistory = (entry) => { const h = loadHistory(); h.unshift({ ...entry, id: Date.now() }); saveHistory(h); return h; };
+const formatHistoryDate = (iso) => new Date(iso).toLocaleDateString("fr-CA", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPOSANT PRINCIPAL
+// ═══════════════════════════════════════════════════════════════════════════
 export default function App() {
-  const [feature, setFeature] = useState("rapprochement");
-  const [accounts, setAccounts] = useState([
-    {id:1,name:"Compte A",rows:[],fileType:"pdf",pdfLoading:false,pdfName:""},
-    {id:2,name:"Compte B",rows:[],fileType:"pdf",pdfLoading:false,pdfName:""},
-  ]);
-  const [subTab, setSubTab] = useState(0);
-  const [icFilter, setIcFilter] = useState("all");
-  const [loading, setLoading] = useState(false);
-  const [loadingMsg, setLoadingMsg] = useState("");
+  const [activeTab, setActiveTab] = useState("rapprochement");
+  const [theme, setTheme] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("rapproche_theme") || "dark" : "dark"));
+  const [history, setHistory] = useState(() => loadHistory());
+
+  const [accA, setAccA] = useState({ nom: "", data: [], loading: false, soldes: null, metadata: null });
+  const [accB, setAccB] = useState({ nom: "", data: [], loading: false, soldes: null, metadata: null });
   const [rapproResult, setRapproResult] = useState(null);
-  const [icResult, setIcResult] = useState(null);
-  const [dragOver, setDragOver] = useState(null);
-  const fileRefs = useRef({});
+  const [loading, setLoading] = useState(false);
 
-  // QB
-  const [qbAcctName, setQbAcctName] = useState("Compte principal");
-  const [qbMonths, setQbMonths] = useState(defaultMonths());
-  const [qbResult, setQbResult] = useState(null);
+  const [comptes, setComptes] = useState([]);
+  const [fluxResult, setFluxResult] = useState(null);
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [destFilter, setDestFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [dateTolerance, setDateTolerance] = useState(7);
 
-  // History
-  const [history, setHistory] = useState([]);
-  const [histFilter, setHistFilter] = useState("all");
-  const [compareA, setCompareA] = useState(null);
-  const [compareB, setCompareB] = useState(null);
-  const [showCompare, setShowCompare] = useState(false);
-  const [viewEntry, setViewEntry] = useState(null);
-  const [histLoading, setHistLoading] = useState(true);
+  // 🆕 Soldes — onglet dédié
+  const [pdfsSoldes, setPdfsSoldes] = useState([]); // [{ id, fileName, soldes, metadata, loading }]
+  const [loadingPdfBatch, setLoadingPdfBatch] = useState(false);
 
-  useEffect(() => { loadHistory().then(h => { setHistory(h); setHistLoading(false); }); }, []);
+  const refA = useRef(null);
+  const refB = useRef(null);
+  const refPdfBatch = useRef(null);
 
-  const addToHistory = useCallback(async (entry) => {
-    const newHist = [entry, ...history].slice(0, 50);
-    setHistory(newHist);
-    await saveHistory(newHist);
-  }, [history]);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.head.appendChild(style);
+      return () => document.head.removeChild(style);
+    }
+  }, []);
 
-  const deleteEntry = async (id) => {
-    const newHist = history.filter(h => h.id !== id);
-    setHistory(newHist);
-    await saveHistory(newHist);
-    if (compareA?.id === id) setCompareA(null);
-    if (compareB?.id === id) setCompareB(null);
-  };
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.body.className = theme === "light" ? "theme-light" : "";
+      localStorage.setItem("rapproche_theme", theme);
+    }
+  }, [theme]);
 
-  const clearHistory = async () => {
-    setHistory([]); setCompareA(null); setCompareB(null); setShowCompare(false);
-    await saveHistory([]);
-  };
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
-  // Upload helpers
-  const upd = (id, patch) => setAccounts(a => a.map(x => x.id===id ? {...x,...patch} : x));
-  const handlePDF = async (id,file,name) => {
-    upd(id,{pdfLoading:true,pdfName:file.name,rows:[]});
-    try { const b64=await fileToBase64(file); const rows=await extractPDFTransactions(b64,name); upd(id,{pdfLoading:false,rows}); }
-    catch { upd(id,{pdfLoading:false,pdfName:"",rows:[]}); }
-  };
-  const handleCSV = (id,file) => { const r=new FileReader(); r.onload=e=>upd(id,{rows:parseCSV(e.target.result),pdfName:file.name}); r.readAsText(file); };
-  const handleFile = (id,file,name,ft) => { if(file.name.toLowerCase().endsWith(".pdf")||ft==="pdf") handlePDF(id,file,name); else handleCSV(id,file); };
-  const canAnalyze = accounts.every(a=>a.rows.length>0) && !accounts.some(a=>a.pdfLoading);
-
-  // QB helpers
-  const updMonth = (id,patch) => setQbMonths(m=>m.map(x=>x.id===id?{...x,...patch}:x));
-  const canQb = qbMonths.length>0 && qbMonths.every(m=>m.label&&m.bankSolde!==""&&m.qbSolde!=="");
-
-  const analyzeRapprochement = async () => {
-    setLoading(true); setRapproResult(null); setLoadingMsg("Rapprochement en cours…");
+  // ─── HANDLERS COMMUNS ────────────────────────────────────────────────────
+  const handleFile = async (e, setter, current) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setter({ ...current, loading: true });
     try {
-      const sections = accounts.map(a=>`=== ${a.name} ===\n${a.rows.map((r,i)=>`  ${i+1}. ${r.date||gDate(r)} | ${r.libelle||gLabel(r)} | ${fmt(parseFloat(r.montant||0)||gAmt(r))} €`).join("\n")}`).join("\n\n");
-      const prompt = `Tu es expert en rapprochement bancaire. ${accounts.length} comptes.\n\n${sections}\n\nRetourne UNIQUEMENT ce JSON (sans markdown) :\n{"summary":{"totalA":0,"totalB":0,"matched":0,"unmatched":0,"ecart":0,"taux_rapprochement":0},"pairs":[{"dateA":"","labelA":"","amountA":0,"dateB":"","labelB":"","amountB":0,"delta":0,"status":"matched"}],"unmatched":[{"account":"","date":"","label":"","amount":0,"reason":""}],"analysis":"Analyse 3-5 phrases en français."}`;
-      const text = await callClaude([{role:"user",content:prompt}]);
-      const r = safeParseJSON(text);
-      setRapproResult(r);
-      await addToHistory({id:Date.now(),type:"rapprochement",title:`${accounts.map(a=>a.name).join(" vs ")}`,date:nowStr(),result:r,summary:{taux_rapprochement:r.summary?.taux_rapprochement,matched:r.summary?.matched,unmatched:r.summary?.unmatched,ecart:r.summary?.ecart},accounts:accounts.map(a=>a.name)});
-    } catch(e){console.error(e); alert("Erreur d'analyse: "+e.message);}
-    setLoading(false); setLoadingMsg("");
+      const result = await parseFile(file, current.nom);
+      // 🆕 Soldes : priorité 1 = PDF, priorité 2 = ligne de titre CSV, priorité 3 = colonne Solde
+      let soldes = result.soldes;
+      if (!soldes && result.rawText) {
+        // Chercher d'abord dans la ligne de titre ("Solde bancaire: ... Solde de fermeture: ...")
+        const headerSoldes = extractSoldesFromHeader(result.rawText);
+        const dataSoldes = computeSoldesFromData(result.data);
+        if (headerSoldes) {
+          soldes = {
+            ouverture: headerSoldes.ouverture != null ? headerSoldes.ouverture : dataSoldes?.ouverture ?? null,
+            fermeture: headerSoldes.fermeture != null ? headerSoldes.fermeture : dataSoldes?.fermeture ?? null,
+            totalDebits: dataSoldes?.totalDebits ?? null,
+            totalCredits: dataSoldes?.totalCredits ?? null,
+          };
+        } else {
+          soldes = dataSoldes;
+        }
+      }
+      setter({
+        nom: current.nom || file.name.replace(/\.[^.]+$/, ""),
+        data: result.data,
+        loading: false,
+        fileType: file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "csv",
+        soldes,
+        metadata: result.metadata,
+      });
+    } catch (err) {
+      alert("Erreur de lecture : " + err.message);
+      setter({ ...current, loading: false });
+    }
   };
 
-  const analyzeIntercomptes = async () => {
-    setLoading(true); setIcResult(null); setLoadingMsg("Détection des flux intercomptes…");
+  const handleFileA = (e) => handleFile(e, setAccA, accA);
+  const handleFileB = (e) => handleFile(e, setAccB, accB);
+
+  // ─── RAPPROCHEMENT ───────────────────────────────────────────────────────
+  const runRapprochement = async () => {
+    if (!accA.data.length || !accB.data.length) {
+      alert("Chargez les deux comptes d'abord !");
+      return;
+    }
+    setLoading(true);
+    setRapproResult(null);
+
+    const promptA = accA.data.slice(0, 80).map((r, i) => `${i}| ${gDate(r)} | ${gLabel(r)} | ${getAmount(r)}`).join("\n");
+    const promptB = accB.data.slice(0, 80).map((r, i) => `${i}| ${gDate(r)} | ${gLabel(r)} | ${getAmount(r)}`).join("\n");
+
+    const prompt = `Rapproche ces 2 comptes (paires de transactions identiques).
+
+IMPORTANT : si un montant dans A est 100x un montant dans B (ex. 3920 vs 39.20), c'est probablement la MÊME transaction avec une erreur d'extraction PDF. Apparie quand même.
+
+Compte A (${accA.nom}):
+${promptA}
+
+Compte B (${accB.nom}):
+${promptB}
+
+JSON uniquement (sans markdown) :
+{"p": [[indexA, indexB], ...], "aOnly": [...], "bOnly": [...]}`;
+
     try {
-      const names = accounts.map(a=>a.name);
-      const sections = accounts.map(a=>`=== ${a.name} ===\n${a.rows.map((r,i)=>`  ${i+1}. ${r.date||gDate(r)} | ${r.libelle||gLabel(r)} | ${fmt(parseFloat(r.montant||0)||gAmt(r))} €`).join("\n")}`).join("\n\n");
-      const mxInit = JSON.stringify(names.reduce((acc,a)=>{names.forEach(b=>{if(!acc[a])acc[a]={};acc[a][b]=0});return acc},{}));
-      const prompt = `Expert flux bancaires intercomptes. Comptes: ${names.join(", ")}.\n\n${sections}\n\nRetourne UNIQUEMENT ce JSON:\n{"summary":{"total_flows":0,"confirmed":0,"unilateral":0,"partial":0,"total_volume":0},"flows":[{"date":"","label":"","amount":0,"source":"","destination":"","status":"confirmed","source_label":"","dest_label":"","ecart":0,"note":""}],"matrix":${mxInit},"analysis":"Analyse en français."}`;
-      const text = await callClaude([{role:"user",content:prompt}],4000);
-      const r = safeParseJSON(text);
-      setIcResult(r);
-      await addToHistory({id:Date.now(),type:"intercomptes",title:`Flux: ${names.join(", ")}`,date:nowStr(),result:r,summary:{total_flows:r.summary?.total_flows,confirmed:r.summary?.confirmed,total_volume:r.summary?.total_volume},accounts:names});
-    } catch(e){console.error(e); alert("Erreur d'analyse: "+e.message);}
-    setLoading(false); setLoadingMsg("");
+      const txt = await callClaude(prompt, 8000);
+      const raw = extractJSON(txt);
+      const pairs = (raw.p || []).map(([ia, ib]) => {
+        const ra = accA.data[ia], rb = accB.data[ib];
+        const amountA = getAmount(ra), amountB = getAmount(rb);
+        const delta = +(amountA - amountB).toFixed(2);
+        const absD = Math.abs(delta);
+        const ratio = Math.abs(amountA) / Math.max(Math.abs(amountB), 0.0001);
+        const isScale = (ratio > 95 && ratio < 105) || (ratio > 0.0095 && ratio < 0.0105);
+        let status;
+        if (isScale) status = "scale-error";
+        else if (absD < 0.01) status = "matched";
+        else if (absD < 5 || absD / Math.max(Math.abs(amountA), Math.abs(amountB), 1) < 0.05) status = "partial";
+        else status = "mismatch";
+        return { dateA: gDate(ra), labelA: gLabel(ra), amountA, dateB: gDate(rb), labelB: gLabel(rb), amountB, delta, status };
+      });
+      const aOnly = (raw.aOnly || []).map((i) => { const r = accA.data[i]; return { date: gDate(r), label: gLabel(r), amount: getAmount(r) }; });
+      const bOnly = (raw.bOnly || []).map((i) => { const r = accB.data[i]; return { date: gDate(r), label: gLabel(r), amount: getAmount(r) }; });
+      const result = { pairs, aOnly, bOnly };
+      setRapproResult(result);
+
+      const newHistory = addToHistory({
+        type: "rapprochement",
+        date: new Date().toISOString(),
+        comptes: [accA.nom, accB.nom],
+        stats: {
+          matched: pairs.filter((p) => p.status === "matched").length,
+          partial: pairs.filter((p) => p.status === "partial").length,
+          mismatch: pairs.filter((p) => p.status === "mismatch").length,
+          scaleError: pairs.filter((p) => p.status === "scale-error").length,
+          aOnly: aOnly.length, bOnly: bOnly.length,
+        },
+        data: result,
+      });
+      setHistory(newHistory);
+    } catch (err) {
+      alert("Erreur : " + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const analyzeQB = async () => {
-    setLoading(true); setQbResult(null); setLoadingMsg("Conciliation QuickBooks…");
+  // 🆕 Réinitialiser tout l'onglet rapprochement
+  const resetRapprochement = () => {
+    if (!confirm("Réinitialiser le rapprochement ? Les comptes chargés et les résultats seront effacés.")) return;
+    setAccA({ nom: "", data: [], loading: false, soldes: null, metadata: null });
+    setAccB({ nom: "", data: [], loading: false, soldes: null, metadata: null });
+    setRapproResult(null);
+    if (refA.current) refA.current.value = "";
+    if (refB.current) refB.current.value = "";
+  };
+
+  const exportExcel = () => {
+    if (!rapproResult) return;
+    let csv = `=== TRANSACTIONS APPARIÉES ===\n`;
+    csv += `Date ${accA.nom},Libellé ${accA.nom},Montant ${accA.nom},Date ${accB.nom},Libellé ${accB.nom},Montant ${accB.nom},Écart,Statut\n`;
+    rapproResult.pairs.forEach((p) => {
+      csv += `${p.dateA},"${p.labelA}",${p.amountA},${p.dateB},"${p.labelB}",${p.amountB},${p.delta},${p.status}\n`;
+    });
+    csv += `\n=== SEULEMENT DANS ${accA.nom || "COMPTE A"} (NON RAPPROCHÉ) ===\n`;
+    csv += `Date,Libellé,Montant\n`;
+    rapproResult.aOnly.forEach((r) => {
+      csv += `${r.date},"${r.label}",${r.amount}\n`;
+    });
+    csv += `\n=== SEULEMENT DANS ${accB.nom || "COMPTE B"} (NON RAPPROCHÉ) ===\n`;
+    csv += `Date,Libellé,Montant\n`;
+    rapproResult.bOnly.forEach((r) => {
+      csv += `${r.date},"${r.label}",${r.amount}\n`;
+    });
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `rapprochement_${Date.now()}.csv`;
+    link.click();
+  };
+
+  // ─── INTERCOMPTES ───────────────────────────────────────────────────────
+  const addCompte = () => setComptes([...comptes, { id: Date.now(), nom: "", data: [], loading: false }]);
+  const removeCompte = (id) => setComptes(comptes.filter((c) => c.id !== id));
+  const updateCompteNom = (id, nom) => setComptes(comptes.map((c) => (c.id === id ? { ...c, nom } : c)));
+
+  const handleCompteFile = async (id, file) => {
+    if (!file) return;
+    setComptes((prev) => prev.map((c) => (c.id === id ? { ...c, loading: true } : c)));
     try {
-      const rows = qbMonths.map(m=>({month:m.label,bank:parseFloat(m.bankSolde.replace(",","."))||0,qb:parseFloat(m.qbSolde.replace(",","."))||0}));
-      const dataStr = rows.map(r=>`  - ${r.month}: Bancaire=${fmt(r.bank)}€, QB=${fmt(r.qb)}€, Écart=${fmt(r.bank-r.qb)}€`).join("\n");
-      const prompt = `Expert-comptable conciliation QB. Compte "${qbAcctName}".\n\n${dataStr}\n\nRetourne UNIQUEMENT ce JSON:\n{"months":[{"month":"","bank":0,"qb":0,"ecart":0,"ecart_pct":0,"status":"ok","causes_possibles":"","actions":""}],"global":{"ecart_total":0,"ecart_moyen":0,"mois_problematiques":0,"tendance":"stable"},"analysis":"Analyse 4-6 phrases en français avec recommandations QB concrètes."}`;
-      const text = await callClaude([{role:"user",content:prompt}],4000);
-      const r = safeParseJSON(text);
-      setQbResult(r);
-      await addToHistory({id:Date.now(),type:"conciliation",title:`QB: ${qbAcctName}`,date:nowStr(),result:r,summary:{months:rows.length,problems:r.global?.mois_problematiques,avg_ecart:r.global?.ecart_moyen,tendance:r.global?.tendance},qbData:{accountName:qbAcctName,months:qbMonths}});
-    } catch(e){console.error(e); alert("Erreur d'analyse: "+e.message);}
-    setLoading(false); setLoadingMsg("");
+      const current = comptes.find((c) => c.id === id);
+      const result = await parseFile(file, current?.nom);
+      setComptes((prev) => prev.map((c) =>
+        c.id === id ? {
+          ...c, data: result.data,
+          nom: c.nom || file.name.replace(/\.[^.]+$/, ""),
+          loading: false,
+          fileType: file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "csv",
+          soldes: result.soldes, metadata: result.metadata,
+        } : c
+      ));
+    } catch (err) {
+      alert("Erreur : " + err.message);
+      setComptes((prev) => prev.map((c) => (c.id === id ? { ...c, loading: false } : c)));
+    }
   };
 
-  const renderUpload = () => {
-    const cols = Math.min(accounts.length,3);
-    return (
-      <>
-        <div className="upload-grid" style={{gridTemplateColumns:`repeat(${cols},1fr)`}}>
-          {accounts.map((acc,idx) => (
-            <div key={acc.id} className={`upload-card ${dragOver===acc.id?"drag-over":""} ${acc.rows.length>0?"has-data":""} ${acc.pdfLoading?"loading-pdf":""}`}
-              onDragOver={e=>{e.preventDefault();setDragOver(acc.id);}} onDragLeave={()=>setDragOver(null)}
-              onDrop={e=>{e.preventDefault();setDragOver(null);const f=e.dataTransfer.files[0];if(f)handleFile(acc.id,f,acc.name,acc.fileType);}}>
-              <div className="upload-label">
-                <span className="dot" style={{background:acc.rows.length>0?"#34d399":acc.pdfLoading?"#fbbf24":"#38bdf8"}}/>
-                Compte {idx+1}
-                {accounts.length>2&&<button onClick={()=>setAccounts(a=>a.filter(x=>x.id!==acc.id))} style={{marginLeft:"auto",background:"none",border:"none",color:"#475569",cursor:"pointer",fontSize:14}}>×</button>}
-              </div>
-              <input className="acct-input" value={acc.name} placeholder="Nom du compte..." onChange={e=>upd(acc.id,{name:e.target.value})}/>
-              {acc.rows.length===0&&!acc.pdfLoading&&<div className="ftype-tabs"><button className={`ftype-tab ${acc.fileType==="pdf"?"active":""}`} onClick={()=>upd(acc.id,{fileType:"pdf"})}>📄 PDF</button><button className={`ftype-tab ${acc.fileType==="csv"?"active":""}`} onClick={()=>upd(acc.id,{fileType:"csv"})}>📊 CSV</button></div>}
-              {acc.pdfLoading&&<div className="pdf-proc"><div className="spinner"/><span>Claude lit <em style={{color:"#64748b"}}>{acc.pdfName}</em>…</span></div>}
-              {acc.rows.length===0&&!acc.pdfLoading&&acc.fileType==="pdf"&&(<div className="drop-area"><div className="drop-icon">📄</div><div className="drop-text">Glissez votre PDF<br/><span style={{color:"#334155"}}>Claude extrait les transactions</span></div><input ref={el=>fileRefs.current[`${acc.id}-pdf`]=el} type="file" accept=".pdf" style={{display:"none"}} onChange={e=>e.target.files[0]&&handlePDF(acc.id,e.target.files[0],acc.name)}/><button className="drop-btn" onClick={()=>fileRefs.current[`${acc.id}-pdf`]?.click()}>Choisir un PDF</button></div>)}
-              {acc.rows.length===0&&!acc.pdfLoading&&acc.fileType==="csv"&&(<><div className="drop-area"><div className="drop-icon">📂</div><div className="drop-text">Glissez un CSV / TXT</div><input ref={el=>fileRefs.current[`${acc.id}-csv`]=el} type="file" accept=".csv,.txt,.tsv" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleCSV(acc.id,e.target.files[0])}/><button className="drop-btn" onClick={()=>fileRefs.current[`${acc.id}-csv`]?.click()}>Choisir un fichier</button></div><div style={{marginTop:10}}><textarea className="data-ta" placeholder="date,libelle,montant" onChange={e=>upd(acc.id,{rows:parseCSV(e.target.value)})}/></div></>)}
-              {acc.rows.length>0&&!acc.pdfLoading&&(<>{acc.pdfName&&<div className="pdf-badge">📄 {acc.pdfName}</div>}<div style={{color:"#34d399",fontSize:12,marginBottom:10}}>✓ {acc.rows.length} transactions</div><table className="prev-tbl"><thead><tr><th>Date</th><th>Libellé</th><th>Montant</th></tr></thead><tbody>{acc.rows.slice(0,4).map((r,i)=>{const amt=parseFloat(r.montant||0)||gAmt(r);return<tr key={i}><td>{r.date||gDate(r)||"—"}</td><td>{(r.libelle||gLabel(r)).slice(0,22)}</td><td className={amt<0?"neg":""}>{fmt(amt)}</td></tr>})}</tbody></table>{acc.rows.length>4&&<div className="more-rows">+{acc.rows.length-4} lignes</div>}<button style={{marginTop:8,fontSize:11,color:"#475569",background:"none",border:"none",cursor:"pointer"}} onClick={()=>upd(acc.id,{rows:[],pdfName:""})}>↺ Réinitialiser</button></>)}
-            </div>
-          ))}
-        </div>
-        <div style={{marginBottom:18}}><button className="add-btn" onClick={()=>{const id=Date.now();setAccounts(a=>[...a,{id,name:`Compte ${a.length+1}`,rows:[],fileType:"pdf",pdfLoading:false,pdfName:""}]);}}>+ Ajouter un compte</button></div>
-      </>
-    );
+  const runFluxAnalysis = () => {
+    const valid = comptes.filter((c) => c.nom && c.data.length > 0);
+    if (valid.length < 2) {
+      alert("Il faut au moins 2 comptes avec des données et un nom !");
+      return;
+    }
+    const result = detectIntercomptesLocally(valid, { dateTolerance });
+    setFluxResult(result);
+
+    const newHistory = addToHistory({
+      type: "flux",
+      date: new Date().toISOString(),
+      comptes: valid.map((c) => c.nom),
+      stats: {
+        matched: result.filter((f) => f.Statut === "matched" || f.Statut === "matched_delayed").length,
+        unmatchedSent: result.filter((f) => f.Statut === "unmatched_sent").length,
+        unmatchedReceived: result.filter((f) => f.Statut === "unmatched_received").length,
+        scaleError: result.filter((f) => f.Statut === "scale_error").length,
+      },
+      data: result, dateTolerance,
+    });
+    setHistory(newHistory);
   };
 
-  const renderRapproResult = (r, isHistory=false) => (
-    <div className="results">
-      <div className="sum-strip">
-        <div className="stat-card"><div className="stat-lbl">Taux rapprochement</div><div className="stat-val sv-blue">{r.summary?.taux_rapprochement??0}%</div></div>
-        <div className="stat-card"><div className="stat-lbl">Rapprochées</div><div className="stat-val sv-green">{r.summary?.matched??0}</div></div>
-        <div className="stat-card"><div className="stat-lbl">Non rapprochées</div><div className="stat-val sv-red">{r.summary?.unmatched??0}</div></div>
-        <div className="stat-card"><div className="stat-lbl">Écart global</div><div className={`stat-val ${Math.abs(r.summary?.ecart??0)<.01?"sv-green":"sv-red"}`}>{fmt(r.summary?.ecart??0)} €</div></div>
-      </div>
-      {r.analysis&&<div className="ai-box"><div className="ai-box-title">✦ Analyse IA</div><div className="ai-content">{r.analysis}</div></div>}
-      <div className="sub-tabs">
-        <button className={`sub-tab ${subTab===0?"active":""}`} onClick={()=>setSubTab(0)}>Rapprochées ({r.pairs?.length??0})</button>
-        <button className={`sub-tab ${subTab===1?"active":""}`} onClick={()=>setSubTab(1)}>Non rapprochées ({r.unmatched?.length??0})</button>
-      </div>
-      {subTab===0&&(r.pairs?.length>0?(<><div className="sec-title">Paires identifiées</div><table className="tbl"><thead><tr><th>Date A</th><th>Libellé A</th><th>Montant A</th><th>Date B</th><th>Libellé B</th><th>Montant B</th><th>Écart</th><th>Statut</th></tr></thead><tbody>{r.pairs.map((p,i)=><tr key={i}><td>{p.dateA||"—"}</td><td>{p.labelA}</td><td className={p.amountA>=0?"apos":"aneg"}>{fmt(p.amountA)} €</td><td>{p.dateB||"—"}</td><td>{p.labelB}</td><td className={p.amountB>=0?"apos":"aneg"}>{fmt(p.amountB)} €</td><td style={{color:Math.abs(p.delta)<.01?"#34d399":"#fbbf24"}}>{fmt(p.delta)} €</td><td><span className={`pill ${p.status==="matched"?"pill-ok":"pill-warn"}`}>{p.status==="matched"?"✓ Rapproché":"≈ Partiel"}</span></td></tr>)}</tbody></table></>):<div className="empty">Aucune paire rapprochée.</div>)}
-      {subTab===1&&(r.unmatched?.length>0?(<><div className="sec-title">Non rapprochées</div><table className="tbl"><thead><tr><th>Compte</th><th>Date</th><th>Libellé</th><th>Montant</th><th>Motif</th></tr></thead><tbody>{r.unmatched.map((u,i)=><tr key={i}><td style={{color:"#a78bfa"}}>{u.account}</td><td>{u.date||"—"}</td><td>{u.label}</td><td className={u.amount>=0?"apos":"aneg"}>{fmt(u.amount)} €</td><td style={{color:"#64748b",fontStyle:"italic"}}>{u.reason}</td></tr>)}</tbody></table></>):<div className="empty-ok">✓ Tout est rapproché !</div>)}
-      {!isHistory&&<div className="analyze-sec"><button className="reset-btn" onClick={()=>{setRapproResult(null);setSubTab(0);}}>↺ Nouvelle analyse</button></div>}
-    </div>
-  );
+  const filteredFlux = fluxResult ? fluxResult.filter((f) => {
+    const matchSource = !sourceFilter || f["Compte source"] === sourceFilter;
+    const matchDest = !destFilter || f["Compte destination"] === destFilter;
+    const matchStatus = !statusFilter || f.Statut === statusFilter;
+    return matchSource && matchDest && matchStatus;
+  }) : [];
 
-  const renderIcResult = (r, isHistory=false) => {
-    const accountNames = accounts.map(a=>a.name);
-    const flows = r?.flows||[];
-    const filtered = icFilter==="all"?flows:flows.filter(f=>f.status===icFilter);
-    const getC = name => { const idx=accounts.findIndex(a=>a.name===name); return ACCT_COLORS[Math.max(idx,0)%ACCT_COLORS.length]; };
-    return (
-      <div className="results">
-        <div className="ic-sum">
-          <div className="stat-card"><div className="stat-lbl">Flux détectés</div><div className="stat-val sv-purple">{r.summary?.total_flows??0}</div></div>
-          <div className="stat-card"><div className="stat-lbl">Confirmés</div><div className="stat-val sv-green">{r.summary?.confirmed??0}</div></div>
-          <div className="stat-card"><div className="stat-lbl">Volume total</div><div className="stat-val sv-blue">{fmt(r.summary?.total_volume??0)} €</div></div>
-        </div>
-        {r.analysis&&<div className="ai-box"><div className="ai-box-title">✦ Analyse des flux</div><div className="ai-content">{r.analysis}</div></div>}
-        {r.matrix&&accountNames.length>=2&&(<><div className="sec-title">Matrice des flux</div><div style={{fontSize:10,color:"#475569",textAlign:"center",marginBottom:8}}>Volume transféré (€) — ligne=source, colonne=destinataire</div><div className="mx-wrap"><table className="mx-tbl"><thead><tr><th className="rh">Source↓/Dest→</th>{accountNames.map(n=><th key={n}>{n}</th>)}</tr></thead><tbody>{accountNames.map(src=><tr key={src}><th className="rh" style={{textAlign:"left",color:"#94a3b8"}}>{src}</th>{accountNames.map(dst=>{const v=r.matrix?.[src]?.[dst]??0;return<td key={dst} className={src===dst?"self":v>0?"hf":""}>{src===dst?"—":v>0?`${fmt(v)} €`:"—"}</td>})}</tr>)}</tbody></table></div></>)}
-        <div className="sec-title">Détail des flux</div>
-        <div className="flt-bar"><span className="flt-lbl">Filtrer :</span>{[["all","Tous"],["confirmed","Confirmés"],["unilateral","Unilatéraux"],["partial","Partiels"]].map(([v,l])=><button key={v} className={`flt-btn ${icFilter===v?"active":""}`} onClick={()=>setIcFilter(v)}>{l} ({v==="all"?flows.length:flows.filter(f=>f.status===v).length})</button>)}</div>
-        {filtered.length>0?<table className="tbl"><thead><tr><th>Date</th><th>Flux</th><th>Libellé source</th><th>Libellé destinataire</th><th>Montant</th><th>Écart</th><th>Statut</th></tr></thead><tbody>{filtered.map((f,i)=>{const sc=getC(f.source);const dc=getC(f.destination);return<tr key={i}><td>{f.date||"—"}</td><td><div className="flow-arr"><span style={{background:sc.bg,border:`1px solid ${sc.bd}`,color:sc.tx,borderRadius:6,padding:"3px 9px",fontSize:11,whiteSpace:"nowrap"}}>{f.source}</span><span style={{color:"#475569"}}>→</span><span style={{background:dc.bg,border:`1px solid ${dc.bd}`,color:dc.tx,borderRadius:6,padding:"3px 9px",fontSize:11,whiteSpace:"nowrap"}}>{f.destination}</span></div></td><td style={{color:"#cbd5e1",maxWidth:150}}>{f.source_label||f.label}</td><td style={{color:"#94a3b8",maxWidth:150,fontStyle:f.dest_label?"normal":"italic"}}>{f.dest_label||"Non trouvé"}</td><td className="aneg" style={{fontWeight:600}}>{fmt(Math.abs(f.amount))} €</td><td style={{color:Math.abs(f.ecart||0)<.01?"#34d399":"#fbbf24"}}>{fmt(f.ecart||0)} €</td><td><span className={`pill ${f.status==="confirmed"?"pill-conf":f.status==="unilateral"?"pill-uni":"pill-part"}`}>{f.status==="confirmed"?"✓ Confirmé":f.status==="unilateral"?"⚠ Unilatéral":"≈ Partiel"}</span></td></tr>})}</tbody></table>:<div className="empty">Aucun flux avec ce filtre.</div>}
-        {!isHistory&&<div className="analyze-sec"><button className="reset-btn" onClick={()=>setIcResult(null)}>↺ Nouvelle analyse</button></div>}
-      </div>
-    );
+  const exportFluxExcel = () => {
+    if (!filteredFlux.length) return;
+    const headers = Object.keys(filteredFlux[0]);
+    let csv = headers.join(",") + "\n";
+    filteredFlux.forEach((f) => {
+      csv += headers.map((h) => `"${String(f[h] ?? "").replace(/"/g, '""')}"`).join(",") + "\n";
+    });
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    const suffix = sourceFilter || destFilter || statusFilter ? `_filtré` : "";
+    link.download = `Flux_Intercomptes${suffix}_${new Date().toISOString().split("T")[0]}.csv`;
+    link.click();
   };
 
-  const renderQBInput = () => (
-    <>
-      <div style={{marginBottom:20}}><div style={{fontSize:11,color:"#64748b",textTransform:"uppercase",letterSpacing:2,marginBottom:10,fontFamily:"Syne,sans-serif",fontWeight:700}}>Nom du compte</div><input className="acct-input" style={{maxWidth:360}} value={qbAcctName} onChange={e=>setQbAcctName(e.target.value)} placeholder="Ex: BNP - Compte courant"/></div>
-      <div className="qb-layout">
-        <div className="qb-card">
-          <div className="qb-title bank">🏦 Soldes bancaires</div>
-          {qbMonths.map(m=><div key={m.id} className="mrow"><input className="mi" value={m.label} onChange={e=>updMonth(m.id,{label:e.target.value})} placeholder="Mois (ex: Janvier 2025)"/><input className="mi" value={m.bankSolde} onChange={e=>updMonth(m.id,{bankSolde:e.target.value})} placeholder="Solde bancaire (€)" type="number" step="0.01"/><button className="rm-btn" onClick={()=>setQbMonths(m2=>m2.filter(x=>x.id!==m.id))}>×</button></div>)}
-          <button className="add-btn" style={{marginTop:4}} onClick={()=>setQbMonths(m=>[...m,{id:Date.now(),label:"",bankSolde:"",qbSolde:""}])}>+ Ajouter un mois</button>
-        </div>
-        <div className="qb-card">
-          <div className="qb-title qb">📒 Soldes QuickBooks</div>
-          {qbMonths.map(m=><div key={m.id} className="mrow"><div style={{fontSize:12,color:"#94a3b8",padding:"8px 0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.label||"—"}</div><input className="mi" value={m.qbSolde} onChange={e=>updMonth(m.id,{qbSolde:e.target.value})} placeholder="Solde QuickBooks (€)" type="number" step="0.01"/><div/></div>)}
-          <div className="qb-note">💡 Dans QB : <strong>Comptabilité → Plan comptable → Voir le registre</strong>, filtrez par mois.</div>
-        </div>
-      </div>
-      <div className="analyze-sec">
-        <button className="analyze-btn" onClick={analyzeQB} disabled={!canQb||loading}>{loading?"Analyse en cours…":"📊 Analyser la conciliation QB"}</button>
-        {loading&&<><div className="loading-bar"><div className="loading-fill"/></div><div className="loading-msg">{loadingMsg}</div></>}
-        {!canQb&&!loading&&<div className="loading-msg" style={{color:"#334155"}}>Renseignez tous les mois (nom + soldes)</div>}
-      </div>
-    </>
-  );
+  // 🆕 Génère un PDF téléchargeable des flux intercomptes
+  const exportFluxPDF = async () => {
+    if (!filteredFlux.length) {
+      alert("Aucun flux à exporter. Lancez d'abord une analyse.");
+      return;
+    }
+    try {
+      const { jsPDF } = await loadJsPDF();
+      const doc = new jsPDF();
+      const pageW = doc.internal.pageSize.getWidth();
 
-  const renderQBResult = (r, isHistory=false) => {
-    const months = r.months||[];
-    const g = r.global||{};
-    const maxAbs = Math.max(...months.map(m=>Math.max(Math.abs(m.bank),Math.abs(m.qb))),1);
-    return (
-      <div className="results">
-        <div className="qb-sum">
-          <div className="stat-card"><div className="stat-lbl">Mois analysés</div><div className="stat-val sv-blue">{months.length}</div></div>
-          <div className="stat-card"><div className="stat-lbl">Problématiques</div><div className="stat-val sv-red">{g.mois_problematiques??0}</div></div>
-          <div className="stat-card"><div className="stat-lbl">Écart moyen / mois</div><div className={`stat-val ${Math.abs(g.ecart_moyen||0)<1?"sv-green":"sv-yellow"}`}>{fmt(g.ecart_moyen??0)} €</div></div>
-          <div className="stat-card"><div className="stat-lbl">Tendance</div><div className={`stat-val ${g.tendance==="stable"?"sv-green":g.tendance==="croissant"?"sv-red":"sv-yellow"}`} style={{fontSize:15,paddingTop:4}}>{g.tendance==="stable"?"↔ Stable":g.tendance==="croissant"?"↑ Croissant":"↓ Décroissant"}</div></div>
-        </div>
-        {r.analysis&&<div className="ai-box"><div className="ai-box-title">✦ Analyse IA — Conciliation QB</div><div className="ai-content">{r.analysis}</div></div>}
-        <div className="sec-title">Soldes par mois</div>
-        <div className="bar-leg"><div className="leg-item"><div className="leg-dot" style={{background:"rgba(56,189,248,.5)"}}/>Solde bancaire</div><div className="leg-item"><div className="leg-dot" style={{background:"rgba(167,139,250,.5)"}}/>Solde QuickBooks</div></div>
-        <div className="bar-chart">{months.map((m,i)=>{const bW=Math.abs(m.bank)/maxAbs*100;const qW=Math.abs(m.qb)/maxAbs*100;const ec=m.bank-m.qb;return<div className="bar-row" key={i}><div className="bar-mo">{m.month.slice(0,7)}</div><div style={{flex:1,display:"flex",flexDirection:"column",gap:3}}><div className="bar-track"><div className="bar-fill" style={{width:`${bW}%`,minWidth:2,background:"rgba(56,189,248,.3)"}}/><span style={{position:"absolute",left:`${Math.min(bW,70)}%`,paddingLeft:6,fontSize:10,color:"#38bdf8",whiteSpace:"nowrap"}}>{fmt(m.bank)} €</span></div><div className="bar-track"><div className="bar-fill" style={{width:`${qW}%`,minWidth:2,background:"rgba(167,139,250,.3)"}}/><span style={{position:"absolute",left:`${Math.min(qW,70)}%`,paddingLeft:6,fontSize:10,color:"#a78bfa",whiteSpace:"nowrap"}}>{fmt(m.qb)} €</span></div></div><div className={`bar-ecart ${Math.abs(ec)<.01?"ez":ec>0?"ep":"en"}`}>{ec>0?"+":""}{fmt(ec)} €</div></div>})}</div>
-        <div className="sec-title">Détail mois par mois</div>
-        <table className="tbl">
-          <thead><tr><th>Mois</th><th className="r">Solde bancaire</th><th className="r">Solde QB</th><th className="r">Écart</th><th className="r">Écart %</th><th>Statut</th><th>Causes possibles</th><th>Action QB</th></tr></thead>
-          <tbody>
-            {months.map((m,i)=>{const ec=m.bank-m.qb;const cls=Math.abs(ec)<.01?"ez":ec>0?"ep":"en";return<tr key={i}><td><span className="mo-chip">{m.month}</span></td><td className="r" style={{color:"#38bdf8",fontWeight:500}}>{fmt(m.bank)} €</td><td className="r" style={{color:"#a78bfa",fontWeight:500}}>{fmt(m.qb)} €</td><td className={`r ${cls}`}>{ec>0?"+":""}{fmt(ec)} €</td><td className="r" style={{color:"#64748b",fontSize:11}}>{m.ecart_pct!=null?`${m.ecart_pct>0?"+":""}${m.ecart_pct.toFixed(2)}%`:"—"}</td><td><span className={`pill ${m.status==="ok"?"pill-ok":m.status==="warning"?"pill-warn":"pill-err"}`}>{m.status==="ok"?"✓ OK":m.status==="warning"?"⚠ Attention":"✗ Erreur"}</span></td><td style={{color:"#94a3b8",fontSize:12,maxWidth:180}}>{m.causes_possibles||"—"}</td><td style={{color:"#64748b",fontSize:11,fontStyle:"italic",maxWidth:180}}>{m.actions||"—"}</td></tr>})}
-            <tr className="total-row"><td style={{color:"#e2e8f4"}}>Total</td><td className="r" style={{color:"#38bdf8"}}>{fmt(months.reduce((s,m)=>s+m.bank,0))} €</td><td className="r" style={{color:"#a78bfa"}}>{fmt(months.reduce((s,m)=>s+m.qb,0))} €</td><td className={`r ${Math.abs(g.ecart_total||0)<.01?"ez":g.ecart_total>0?"ep":"en"}`}>{(g.ecart_total||0)>0?"+":""}{fmt(g.ecart_total||0)} €</td><td colSpan={4}/></tr>
-          </tbody>
-        </table>
-        {!isHistory&&<div className="analyze-sec"><button className="reset-btn" onClick={()=>setQbResult(null)}>↺ Modifier les données</button></div>}
-      </div>
-    );
+      // Libellés lisibles des statuts
+      const statusText = (s) => ({
+        matched: "Apparié",
+        matched_delayed: "Apparié (délai)",
+        unmatched_sent: "Envoi sans réception",
+        unmatched_received: "Réception sans envoi",
+        scale_error: "Erreur x100",
+      }[s] || s);
+
+      // ─── En-tête ───
+      doc.setFontSize(18);
+      doc.setTextColor(15, 23, 42);
+      doc.text("Résumé des flux intercomptes", 14, 20);
+
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      const dateGen = new Date().toLocaleDateString("fr-CA", {
+        year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit",
+      });
+      doc.text("Généré le " + dateGen, 14, 28);
+
+      // Comptes analysés
+      const comptesNoms = [...new Set([
+        ...filteredFlux.map((f) => f["Compte source"]),
+        ...filteredFlux.map((f) => f["Compte destination"]),
+      ])].filter((c) => c && !c.includes("non identifié"));
+      doc.text("Comptes : " + comptesNoms.join("  /  "), 14, 34);
+
+      // ─── Statistiques ───
+      const nbMatched = filteredFlux.filter((f) => f.Statut === "matched" || f.Statut === "matched_delayed").length;
+      const nbUnsent = filteredFlux.filter((f) => f.Statut === "unmatched_sent").length;
+      const nbUnrec = filteredFlux.filter((f) => f.Statut === "unmatched_received").length;
+      const nbScale = filteredFlux.filter((f) => f.Statut === "scale_error").length;
+      doc.setTextColor(15, 23, 42);
+      doc.text(
+        `${filteredFlux.length} flux  -  ${nbMatched} appariés  -  ${nbUnsent} envois seuls  -  ${nbUnrec} réceptions seules  -  ${nbScale} erreurs x100`,
+        14, 41
+      );
+
+      // ─── Tableau des transferts ───
+      const rows = filteredFlux.map((f) => [
+        f.Date || "—",
+        f["Compte source"] || "—",
+        f["Date réception"] || "—",
+        f["Compte destination"] || "—",
+        formatAmount(f.Montant),
+        String(f["Délai (jours)"] ?? "—"),
+        statusText(f.Statut),
+      ]);
+
+      doc.autoTable({
+        head: [["Date envoi", "Banque source", "Date récep.", "Banque destination", "Montant", "Délai", "Statut"]],
+        body: rows,
+        startY: 47,
+        styles: { fontSize: 8, cellPadding: 2.5 },
+        headStyles: { fillColor: [56, 189, 248], textColor: 255, fontStyle: "bold" },
+        alternateRowStyles: { fillColor: [241, 245, 249] },
+        columnStyles: {
+          4: { halign: "right" },
+          5: { halign: "center" },
+        },
+        // Colorer la ligne selon le statut
+        didParseCell: (data) => {
+          if (data.section === "body") {
+            const statut = filteredFlux[data.row.index].Statut;
+            if (statut === "unmatched_sent" || statut === "unmatched_received") {
+              data.cell.styles.textColor = [180, 83, 9];
+            } else if (statut === "scale_error") {
+              data.cell.styles.textColor = [168, 85, 247];
+            }
+          }
+        },
+      });
+
+      // ─── Totaux par compte ───
+      let finalY = doc.lastAutoTable.finalY + 10;
+      const totaux = {};
+      filteredFlux.forEach((f) => {
+        const src = f["Compte source"];
+        const dst = f["Compte destination"];
+        const m = typeof f.Montant === "number" ? f.Montant : 0;
+        if (src && !src.includes("non identifié")) {
+          totaux[src] = totaux[src] || { envoye: 0, recu: 0 };
+          totaux[src].envoye += m;
+        }
+        if (dst && !dst.includes("non identifié")) {
+          totaux[dst] = totaux[dst] || { envoye: 0, recu: 0 };
+          totaux[dst].recu += m;
+        }
+      });
+
+      if (Object.keys(totaux).length > 0) {
+        if (finalY > 250) { doc.addPage(); finalY = 20; }
+        doc.setFontSize(12);
+        doc.setTextColor(15, 23, 42);
+        doc.text("Totaux par compte", 14, finalY);
+        const totauxRows = Object.entries(totaux).map(([compte, t]) => [
+          compte,
+          formatAmount(t.envoye),
+          formatAmount(t.recu),
+          formatAmount(t.recu - t.envoye),
+        ]);
+        doc.autoTable({
+          head: [["Compte", "Total envoyé", "Total reçu", "Solde net"]],
+          body: totauxRows,
+          startY: finalY + 4,
+          styles: { fontSize: 9, cellPadding: 3 },
+          headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: "bold" },
+          columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" } },
+        });
+      }
+
+      // ─── Pied de page ───
+      const nbPages = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= nbPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text("Rapproche.IA - Résumé des flux intercomptes", 14, doc.internal.pageSize.getHeight() - 8);
+        doc.text(`Page ${i} / ${nbPages}`, pageW - 14, doc.internal.pageSize.getHeight() - 8, { align: "right" });
+      }
+
+      doc.save(`Flux_Intercomptes_${new Date().toISOString().split("T")[0]}.pdf`);
+    } catch (err) {
+      console.error("Erreur génération PDF:", err);
+      alert("Erreur lors de la génération du PDF : " + err.message);
+    }
   };
 
-  const filteredHist = histFilter==="all" ? history : history.filter(h=>h.type===histFilter);
-
-  const renderComparePanel = () => {
-    if (!compareA||!compareB) return null;
-    const sameType = compareA.type===compareB.type;
-    return (
-      <div className="compare-panel">
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
-          <button className="reset-btn" onClick={()=>{setShowCompare(false);setCompareA(null);setCompareB(null);}}>← Retour à l'historique</button>
-          <div style={{fontSize:13,color:"#64748b"}}>Comparaison de deux analyses</div>
-        </div>
-        <div className="compare-grid">
-          {[{entry:compareA,cls:"a",col:"#38bdf8"},{entry:compareB,cls:"b",col:"#a78bfa"}].map(({entry,cls,col})=>(
-            <div key={entry.id} className={`cmp-card ${cls}`}>
-              <div className="cmp-card-title" style={{color:col}}>{entry.title}</div>
-              <div className="cmp-row"><span className="cmp-key">Type</span><span className="cmp-val">{entry.type}</span></div>
-              <div className="cmp-row"><span className="cmp-key">Date</span><span className="cmp-val">{entry.date}</span></div>
-              {entry.type==="rapprochement"&&<>
-                <div className="cmp-row"><span className="cmp-key">Taux rapprochement</span><span className="cmp-val" style={{color:col}}>{entry.summary?.taux_rapprochement}%</span></div>
-                <div className="cmp-row"><span className="cmp-key">Rapprochées</span><span className="cmp-val">{entry.summary?.matched}</span></div>
-                <div className="cmp-row"><span className="cmp-key">Non rapprochées</span><span className="cmp-val">{entry.summary?.unmatched}</span></div>
-                <div className="cmp-row"><span className="cmp-key">Écart global</span><span className="cmp-val" style={{color:Math.abs(entry.summary?.ecart||0)<.01?"#34d399":"#f87171"}}>{fmt(entry.summary?.ecart||0)} €</span></div>
-              </>}
-              {entry.type==="intercomptes"&&<>
-                <div className="cmp-row"><span className="cmp-key">Flux détectés</span><span className="cmp-val" style={{color:col}}>{entry.summary?.total_flows}</span></div>
-                <div className="cmp-row"><span className="cmp-key">Confirmés</span><span className="cmp-val">{entry.summary?.confirmed}</span></div>
-                <div className="cmp-row"><span className="cmp-key">Volume total</span><span className="cmp-val">{fmt(entry.summary?.total_volume||0)} €</span></div>
-              </>}
-              {entry.type==="conciliation"&&<>
-                <div className="cmp-row"><span className="cmp-key">Mois analysés</span><span className="cmp-val" style={{color:col}}>{entry.summary?.months}</span></div>
-                <div className="cmp-row"><span className="cmp-key">Mois problématiques</span><span className="cmp-val" style={{color:"#f87171"}}>{entry.summary?.problems}</span></div>
-                <div className="cmp-row"><span className="cmp-key">Écart moyen</span><span className="cmp-val">{fmt(entry.summary?.avg_ecart||0)} €</span></div>
-                <div className="cmp-row"><span className="cmp-key">Tendance</span><span className="cmp-val">{entry.summary?.tendance}</span></div>
-              </>}
-            </div>
-          ))}
-        </div>
-        {sameType&&compareA.type==="rapprochement"&&(
-          <><div className="sec-title">Évolution entre les deux analyses</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
-            {[["Taux rapprochement",`${compareA.summary?.taux_rapprochement}%`,`${compareB.summary?.taux_rapprochement}%`,compareB.summary?.taux_rapprochement>=compareA.summary?.taux_rapprochement],["Non rapprochées",compareA.summary?.unmatched,compareB.summary?.unmatched,compareB.summary?.unmatched<=compareA.summary?.unmatched],["Écart global",`${fmt(compareA.summary?.ecart||0)} €`,`${fmt(compareB.summary?.ecart||0)} €`,Math.abs(compareB.summary?.ecart||0)<=Math.abs(compareA.summary?.ecart||0)]].map(([k,va,vb,good])=>(
-              <div className="stat-card" key={k}>
-                <div className="stat-lbl">{k}</div>
-                <div style={{display:"flex",alignItems:"center",gap:10,marginTop:6}}>
-                  <span style={{color:"#38bdf8",fontSize:16,fontWeight:700,fontFamily:"Syne,sans-serif"}}>{va}</span>
-                  <span style={{color:"#475569"}}>→</span>
-                  <span style={{color:good?"#34d399":"#f87171",fontSize:16,fontWeight:700,fontFamily:"Syne,sans-serif"}}>{vb}</span>
-                  <span style={{fontSize:14}}>{good?"📈":"📉"}</span>
-                </div>
-              </div>
-            ))}
-          </div></>
-        )}
-      </div>
-    );
+  // ─── HISTORIQUE ──────────────────────────────────────────────────────────
+  const deleteHistoryItem = (id) => { const h = history.filter((x) => x.id !== id); saveHistory(h); setHistory(h); };
+  const clearHistory = () => { if (!confirm("Effacer tout l'historique ?")) return; saveHistory([]); setHistory([]); };
+  const replayHistoryItem = (item) => {
+    if (item.type === "rapprochement") { setRapproResult(item.data); setActiveTab("rapprochement"); }
+    else if (item.type === "flux") { setFluxResult(item.data); setActiveTab("intercomptes"); }
   };
 
-  const renderHistory = () => {
-    if (histLoading) return <div className="empty"><div className="spinner" style={{width:20,height:20,border:"2px solid rgba(56,189,248,.2)",borderTopColor:"#38bdf8",margin:"0 auto 12px"}}/><span>Chargement…</span></div>;
-    if (showCompare&&compareA&&compareB) return renderComparePanel();
+  // ─── 🆕 SOLDES — handlers ────────────────────────────────────────────────
+  const handlePdfBatch = async (files) => {
+    if (!files || !files.length) return;
+    setLoadingPdfBatch(true);
+    const fileArr = Array.from(files);
 
-    return (
-      <div className="results">
-        <div className="hist-toolbar">
-          <div className="hist-filters">
-            {[["all","Toutes"],["rapprochement","Rapprochement"],["intercomptes","Intercomptes"],["conciliation","QuickBooks"]].map(([v,l])=>(
-              <button key={v} className={`hist-flt ${histFilter===v?"active":""}`} onClick={()=>setHistFilter(v)}>
-                {l} {v==="all"?`(${history.length})`:`(${history.filter(h=>h.type===v).length})`}
-              </button>
-            ))}
-          </div>
-          <div className="hist-actions">
-            {compareA&&compareB&&<button className="hist-act-btn" style={{color:"#a78bfa",borderColor:"rgba(167,139,250,.25)"}} onClick={()=>setShowCompare(true)}>🔍 Comparer</button>}
-            {history.length>0&&<button className="hist-act-btn export" onClick={()=>exportCSV(history)}>⬇ Exporter CSV</button>}
-            {history.length>0&&<button className="hist-act-btn danger" onClick={clearHistory}>🗑 Tout effacer</button>}
-          </div>
-        </div>
+    const startingId = Date.now();
+    const placeholders = fileArr.map((f, idx) => ({
+      id: startingId + idx, fileName: f.name, loading: true, soldes: null, metadata: null, error: null,
+    }));
+    setPdfsSoldes((prev) => [...prev, ...placeholders]);
 
-        {(compareA||compareB)&&!(compareA&&compareB)&&(
-          <div className="compare-banner">
-            <div className="compare-banner-txt">
-              {compareA?<><strong>A sélectionné :</strong> {compareA.title} — Sélectionnez une 2e entrée (B) à comparer.</>:<><strong>B sélectionné :</strong> {compareB.title} — Sélectionnez une entrée A.</>}
-            </div>
-            <button className="reset-btn" onClick={()=>{setCompareA(null);setCompareB(null);}}>Annuler</button>
-          </div>
-        )}
-        {compareA&&compareB&&!showCompare&&(
-          <div className="compare-banner">
-            <div className="compare-banner-txt"><strong>A:</strong> {compareA.title} &nbsp;|&nbsp; <strong>B:</strong> {compareB.title}</div>
-            <div style={{display:"flex",gap:8}}><button className="compare-do-btn" onClick={()=>setShowCompare(true)}>Voir la comparaison</button><button className="reset-btn" onClick={()=>{setCompareA(null);setCompareB(null);}}>Annuler</button></div>
-          </div>
-        )}
-
-        {viewEntry&&(
-          <div style={{marginBottom:24}}>
-            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
-              <button className="reset-btn" onClick={()=>setViewEntry(null)}>← Retour</button>
-              <div style={{fontFamily:"Syne,sans-serif",fontWeight:700,color:"#e2e8f4",fontSize:15}}>{viewEntry.title}</div>
-              <div style={{fontSize:11,color:"#475569"}}>{viewEntry.date}</div>
-            </div>
-            {viewEntry.type==="rapprochement"&&renderRapproResult(viewEntry.result,true)}
-            {viewEntry.type==="intercomptes"&&renderIcResult(viewEntry.result,true)}
-            {viewEntry.type==="conciliation"&&renderQBResult(viewEntry.result,true)}
-          </div>
-        )}
-
-        {!viewEntry&&(filteredHist.length>0 ? (
-          <div className="hist-grid">
-            {filteredHist.map(h=>{
-              const isA = compareA?.id===h.id;
-              const isB = compareB?.id===h.id;
-              return (
-                <div key={h.id} className={`hist-card ${isA?"compare-a":isB?"compare-b":""}`}>
-                  <div className="hist-card-header">
-                    <div style={{flex:1,minWidth:0}}>
-                      <div className="hist-card-meta">
-                        <span className={`hist-type-pill ${h.type==="rapprochement"?"ht-rapp":h.type==="intercomptes"?"ht-ic":"ht-qb"}`}>
-                          {h.type==="rapprochement"?"⚖ Rapprochement":h.type==="intercomptes"?"🔀 Intercomptes":"📒 QB"}
-                        </span>
-                        {isA&&<span style={{fontSize:10,color:"#38bdf8",background:"rgba(56,189,248,.1)",padding:"2px 8px",borderRadius:10}}>A</span>}
-                        {isB&&<span style={{fontSize:10,color:"#a78bfa",background:"rgba(167,139,250,.1)",padding:"2px 8px",borderRadius:10}}>B</span>}
-                        <span className="hist-date">{h.date}</span>
-                      </div>
-                      <div className="hist-title">{h.title}</div>
-                      <div className="hist-kpis">
-                        {h.type==="rapprochement"&&<><span className="hist-kpi">Taux: <span style={{color:"#38bdf8"}}>{h.summary?.taux_rapprochement}%</span></span><span className="hist-kpi">Rapprochées: <span>{h.summary?.matched}</span></span><span className="hist-kpi">Écart: <span style={{color:Math.abs(h.summary?.ecart||0)<.01?"#34d399":"#f87171"}}>{fmt(h.summary?.ecart||0)} €</span></span></>}
-                        {h.type==="intercomptes"&&<><span className="hist-kpi">Flux: <span style={{color:"#a78bfa"}}>{h.summary?.total_flows}</span></span><span className="hist-kpi">Confirmés: <span>{h.summary?.confirmed}</span></span><span className="hist-kpi">Volume: <span>{fmt(h.summary?.total_volume||0)} €</span></span></>}
-                        {h.type==="conciliation"&&<><span className="hist-kpi">Mois: <span style={{color:"#38bdf8"}}>{h.summary?.months}</span></span><span className="hist-kpi">Problèmes: <span style={{color:h.summary?.problems>0?"#f87171":"#34d399"}}>{h.summary?.problems}</span></span><span className="hist-kpi">Écart moy: <span>{fmt(h.summary?.avg_ecart||0)} €</span></span></>}
-                      </div>
-                    </div>
-                    <div className="hist-card-actions">
-                      <button className="hca-btn view" onClick={()=>setViewEntry(h)}>👁 Voir</button>
-                      <button className={`hca-btn cmp`} onClick={()=>{if(!compareA||compareA.id===h.id){setCompareA(isA?null:h);}else if(!compareB||compareB.id===h.id){setCompareB(isB?null:h);}else{setCompareB(h);}}}>{isA?"✓ A":isB?"✓ B":"+ Comparer"}</button>
-                      {h.type==="conciliation"&&h.qbData&&<button className="hca-btn" style={{color:"#38bdf8"}} onClick={()=>{setQbAcctName(h.qbData.accountName);setQbMonths(h.qbData.months);setFeature("conciliation");setQbResult(null);}}>↺ Réutiliser</button>}
-                      <button className="hca-btn del" onClick={()=>deleteEntry(h.id)}>🗑</button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="no-hist">
-            <div className="no-hist-icon">🕐</div>
-            <div className="no-hist-txt">Aucune analyse dans l'historique{histFilter!=="all"?" pour ce type":""} pour l'instant.<br/>Lancez une analyse pour la retrouver ici automatiquement.</div>
-          </div>
-        ))}
-      </div>
-    );
+    for (let idx = 0; idx < fileArr.length; idx++) {
+      const file = fileArr[idx];
+      const id = startingId + idx;
+      try {
+        const result = await parseFile(file, file.name);
+        setPdfsSoldes((prev) => prev.map((p) =>
+          p.id === id ? { ...p, loading: false, soldes: result.soldes, metadata: result.metadata } : p
+        ));
+      } catch (err) {
+        setPdfsSoldes((prev) => prev.map((p) =>
+          p.id === id ? { ...p, loading: false, error: err.message } : p
+        ));
+      }
+    }
+    setLoadingPdfBatch(false);
   };
+
+  const removePdfSolde = (id) => setPdfsSoldes(pdfsSoldes.filter((p) => p.id !== id));
+  const clearAllSoldes = () => { if (!confirm("Effacer tous les soldes ?")) return; setPdfsSoldes([]); };
+
+  const exportSoldesCSV = () => {
+    if (!pdfsSoldes.length) return;
+    let csv = "Fichier,Banque,Compte,Date début,Date fin,Solde ouverture,Total débits,Total crédits,Solde fermeture,Solde calculé,Écart,Cohérent\n";
+    pdfsSoldes.forEach((p) => {
+      if (!p.soldes) {
+        csv += `"${p.fileName}",,,,,,,,,,${p.error || "Erreur"}\n`;
+        return;
+      }
+      const v = verifySoldes(p.soldes);
+      csv += `"${p.fileName}","${p.metadata?.banque || ""}","${p.metadata?.compte || ""}",${p.metadata?.dateDebut || ""},${p.metadata?.dateFin || ""},${p.soldes.ouverture ?? ""},${p.soldes.totalDebits ?? ""},${p.soldes.totalCredits ?? ""},${p.soldes.fermeture ?? ""},${v?.expected ?? ""},${v?.ecart ?? ""},${v?.coherent ? "OUI" : "NON"}\n`;
+    });
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Soldes_${new Date().toISOString().split("T")[0]}.csv`;
+    link.click();
+  };
+
+  // ─── Sélecteurs pour filtres intercomptes ────────────────────────────────
+  const uniqueSources = fluxResult ? [...new Set(fluxResult.map((f) => f["Compte source"]))] : [];
+  const uniqueDests = fluxResult ? [...new Set(fluxResult.map((f) => f["Compte destination"]))] : [];
+  const uniqueStatuses = fluxResult ? [...new Set(fluxResult.map((f) => f.Statut))] : [];
+
+  const matchedCount = fluxResult?.filter((f) => f.Statut === "matched" || f.Statut === "matched_delayed").length || 0;
+  const unmatchedSentCount = fluxResult?.filter((f) => f.Statut === "unmatched_sent").length || 0;
+  const unmatchedReceivedCount = fluxResult?.filter((f) => f.Statut === "unmatched_received").length || 0;
+  const scaleErrorCount = fluxResult?.filter((f) => f.Statut === "scale_error").length || 0;
 
   return (
-    <>
-      <style>{css}</style>
-      <div className="app">
-        <header className="header">
-          <div className="logo">Rapproche<span>.</span>IA</div>
-          <div className="badge">✦ Powered by Claude</div>
-        </header>
-
-        <nav className="nav-tabs">
-          <button className={`nav-tab ${feature==="rapprochement"?"active":""}`} onClick={()=>{setFeature("rapprochement");setRapproResult(null);}}>⚖ Rapprochement</button>
-          <button className={`nav-tab ${feature==="intercomptes"?"active":""}`} onClick={()=>{setFeature("intercomptes");setIcResult(null);}}>🔀 Intercomptes</button>
-          <button className={`nav-tab ${feature==="conciliation"?"active":""}`} onClick={()=>{setFeature("conciliation");setQbResult(null);}}>📒 Conciliation QB</button>
-          <button className={`nav-tab ${feature==="historique"?"active":""}`} onClick={()=>{setFeature("historique");setViewEntry(null);}}>🕐 Historique{history.length>0&&<span className="hist-count">{history.length}</span>}</button>
-        </nav>
-
-        <main className="main">
-          <div className="hero">
-            {feature==="rapprochement"&&<><h1>Rapprochement Bancaire</h1><p>Importez vos relevés PDF ou CSV — l'IA identifie les correspondances et les écarts.</p></>}
-            {feature==="intercomptes"&&<><h1>Transactions Intercomptes</h1><p>Détectez tous les flux entre vos comptes avec source et destinataire.</p></>}
-            {feature==="conciliation"&&<><h1>Conciliation QuickBooks</h1><p>Comparez les soldes bancaires réels avec QuickBooks, mois par mois.</p></>}
-            {feature==="historique"&&<><h1>Historique des analyses</h1><p>Retrouvez, comparez et exportez toutes vos analyses précédentes.</p></>}
-          </div>
-
-          {feature==="rapprochement"&&!rapproResult&&(<>{renderUpload()}<div className="analyze-sec"><button className="analyze-btn" onClick={analyzeRapprochement} disabled={!canAnalyze||loading}>{loading?"Analyse…":"⚡ Lancer le rapprochement IA"}</button>{loading&&<><div className="loading-bar"><div className="loading-fill"/></div><div className="loading-msg">{loadingMsg}</div></>}</div></>)}
-          {feature==="rapprochement"&&rapproResult&&renderRapproResult(rapproResult)}
-
-          {feature==="intercomptes"&&!icResult&&(<>{renderUpload()}<div className="analyze-sec"><button className="analyze-btn" onClick={analyzeIntercomptes} disabled={!canAnalyze||loading}>{loading?"Analyse…":"🔀 Analyser les flux"}</button>{loading&&<><div className="loading-bar"><div className="loading-fill"/></div><div className="loading-msg">{loadingMsg}</div></>}</div></>)}
-          {feature==="intercomptes"&&icResult&&renderIcResult(icResult)}
-
-          {feature==="conciliation"&&!qbResult&&renderQBInput()}
-          {feature==="conciliation"&&qbResult&&renderQBResult(qbResult)}
-
-          {feature==="historique"&&renderHistory()}
-        </main>
+    <div className="app">
+      <div className="header">
+        <div className="header-left">
+          <div className="logo">Rapproche<span>.IA</span></div>
+          <div className="badge">v5 · {theme === "dark" ? "Sombre" : "Clair"}</div>
+        </div>
+        <button className="theme-toggle" onClick={toggleTheme} title={theme === "dark" ? "Passer en clair" : "Passer en sombre"}>
+          {theme === "dark" ? "☀️" : "🌙"}
+        </button>
       </div>
-    </>
+
+      <div className="nav-tabs">
+        <button className={`nav-tab ${activeTab === "rapprochement" ? "active" : ""}`} onClick={() => setActiveTab("rapprochement")}>🏦 Rapprochement</button>
+        <button className={`nav-tab ${activeTab === "intercomptes" ? "active" : ""}`} onClick={() => setActiveTab("intercomptes")}>🔀 Flux Intercomptes</button>
+        <button className={`nav-tab ${activeTab === "soldes" ? "active" : ""}`} onClick={() => setActiveTab("soldes")}>📄 Soldes</button>
+        <button className={`nav-tab ${activeTab === "historique" ? "active" : ""}`} onClick={() => setActiveTab("historique")}>📜 Historique {history.length > 0 && `(${history.length})`}</button>
+      </div>
+
+      <div className="main">
+        {/* ═════ RAPPROCHEMENT ═════ */}
+        {activeTab === "rapprochement" && (
+          <>
+            <div className="card">
+              <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: 18, marginBottom: 20 }}>📂 Charger les comptes</h2>
+              <div className="compte-section">
+                <div className="compte-input">
+                  <label>Nom du compte A</label>
+                  <input type="text" value={accA.nom} onChange={(e) => setAccA({ ...accA, nom: e.target.value })} placeholder="Ex: QuickBooks" />
+                </div>
+                <div className="compte-input">
+                  <label>Nom du compte B</label>
+                  <input type="text" value={accB.nom} onChange={(e) => setAccB({ ...accB, nom: e.target.value })} placeholder="Ex: BMO Chèque" />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+                <div>
+                  <UploadZone refInput={refA} acc={accA} label="Compte A" onChange={handleFileA} />
+                  {accA.soldes && <SoldesInline soldes={accA.soldes} metadata={accA.metadata} />}
+                  {accA.data.length > 0 && <TransactionsPreview data={accA.data} nom={accA.nom} />}
+                </div>
+                <div>
+                  <UploadZone refInput={refB} acc={accB} label="Compte B" onChange={handleFileB} />
+                  {accB.soldes && <SoldesInline soldes={accB.soldes} metadata={accB.metadata} />}
+                  {accB.data.length > 0 && <TransactionsPreview data={accB.data} nom={accB.nom} />}
+                </div>
+              </div>
+              <div className="actions">
+                <button className="btn btn-primary" onClick={runRapprochement} disabled={loading || accA.loading || accB.loading}>
+                  {loading && <span className="loading"></span>}
+                  {loading ? "Analyse en cours..." : "🔍 Analyser"}
+                </button>
+                <button className="btn btn-secondary" onClick={resetRapprochement} disabled={loading}>
+                  🔄 Réinitialiser
+                </button>
+              </div>
+            </div>
+
+            {rapproResult && (
+              <div className="card">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+                  <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: 18 }}>📊 Résultats</h2>
+                  <button className="btn btn-export" onClick={exportExcel}>📥 Exporter Excel</button>
+                </div>
+                <div className="stats">
+                  <div className="stat-card"><div className="stat-value">{rapproResult.pairs.length}</div><div className="stat-label">Rapprochés</div></div>
+                  <div className="stat-card"><div className="stat-value" style={{ color: "#a855f7" }}>{rapproResult.pairs.filter((p) => p.status === "scale-error").length}</div><div className="stat-label">Erreurs ×100</div></div>
+                  <div className="stat-card"><div className="stat-value">{rapproResult.aOnly.length}</div><div className="stat-label">Seulement A</div></div>
+                  <div className="stat-card"><div className="stat-value">{rapproResult.bOnly.length}</div><div className="stat-label">Seulement B</div></div>
+                </div>
+                <h3 style={{ fontFamily: "Syne, sans-serif", fontSize: 14, marginBottom: 12, marginTop: 8, color: "var(--text)" }}>
+                  ✓ Transactions appariées ({rapproResult.pairs.length})
+                </h3>
+                <div className="table-wrapper">
+                  <table>
+                    <thead><tr><th>Date A</th><th>Libellé A</th><th>Montant A</th><th>Date B</th><th>Libellé B</th><th>Montant B</th><th>Écart</th><th>Statut</th></tr></thead>
+                    <tbody>
+                      {rapproResult.pairs.length === 0 ? (
+                        <tr><td colSpan="8" style={{ textAlign: "center", color: "var(--text-dim)", padding: 20 }}>Aucune transaction appariée</td></tr>
+                      ) : (
+                        rapproResult.pairs.map((p, i) => (
+                          <tr key={i}>
+                            <td>{p.dateA}</td><td>{p.labelA}</td><td>{formatAmount(p.amountA)}</td>
+                            <td>{p.dateB}</td><td>{p.labelB}</td><td>{formatAmount(p.amountB)}</td>
+                            <td>{formatAmount(p.delta)}</td>
+                            <td><span className={`tag tag-${p.status}`}>
+                              {p.status === "matched" && "✓ Rapproché"}
+                              {p.status === "partial" && "≈ Partiel"}
+                              {p.status === "mismatch" && "✗ Mismatch"}
+                              {p.status === "scale-error" && "⚠ Erreur ×100"}
+                            </span></td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 🆕 Seulement dans A (QuickBooks) */}
+                {rapproResult.aOnly.length > 0 && (
+                  <>
+                    <h3 style={{ fontFamily: "Syne, sans-serif", fontSize: 14, marginBottom: 12, marginTop: 28, color: "var(--text)" }}>
+                      → Seulement dans {accA.nom || "Compte A"} ({rapproResult.aOnly.length})
+                      <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: 12, fontWeight: 400 }}>
+                        — Transactions non rapprochées dans {accA.nom || "Compte A"}
+                      </span>
+                    </h3>
+                    <div className="table-wrapper">
+                      <table>
+                        <thead><tr><th>Date</th><th>Libellé</th><th>Montant</th></tr></thead>
+                        <tbody>
+                          {rapproResult.aOnly.map((r, i) => (
+                            <tr key={i}>
+                              <td>{r.date}</td>
+                              <td>{r.label}</td>
+                              <td style={{ color: r.amount < 0 ? "#f87171" : "#10b981", fontWeight: 600 }}>
+                                {formatAmount(r.amount)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+
+                {/* 🆕 Seulement dans B (Banque) */}
+                {rapproResult.bOnly.length > 0 && (
+                  <>
+                    <h3 style={{ fontFamily: "Syne, sans-serif", fontSize: 14, marginBottom: 12, marginTop: 28, color: "var(--text)" }}>
+                      ← Seulement dans {accB.nom || "Compte B"} ({rapproResult.bOnly.length})
+                      <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: 12, fontWeight: 400 }}>
+                        — Transactions non rapprochées dans {accB.nom || "Compte B"}
+                      </span>
+                    </h3>
+                    <div className="table-wrapper">
+                      <table>
+                        <thead><tr><th>Date</th><th>Libellé</th><th>Montant</th></tr></thead>
+                        <tbody>
+                          {rapproResult.bOnly.map((r, i) => (
+                            <tr key={i}>
+                              <td>{r.date}</td>
+                              <td>{r.label}</td>
+                              <td style={{ color: r.amount < 0 ? "#f87171" : "#10b981", fontWeight: 600 }}>
+                                {formatAmount(r.amount)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ═════ INTERCOMPTES ═════ */}
+        {activeTab === "intercomptes" && (
+          <>
+            <div className="card">
+              <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: 18, marginBottom: 20 }}>🏢 Comptes à analyser</h2>
+              {comptes.map((c, idx) => (
+                <div key={c.id} style={{ marginBottom: 20, padding: 16, background: "var(--card-solid)", borderRadius: 8 }}>
+                  <div style={{ display: "flex", gap: 12, alignItems: "end" }}>
+                    <div style={{ flex: "0 0 40px", fontFamily: "Syne, sans-serif", fontSize: 14, color: "var(--text-dim)" }}>#{idx + 1}</div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>Nom du compte</label>
+                      <input className="styled-input" type="text" value={c.nom} onChange={(e) => updateCompteNom(c.id, e.target.value)} placeholder="Ex: BMO Chèque" />
+                    </div>
+                    <div>
+                      <input type="file" accept=".csv,.pdf" onChange={(e) => handleCompteFile(c.id, e.target.files?.[0])} style={{ display: "none" }} id={`file-${c.id}`} />
+                      <label htmlFor={`file-${c.id}`} className="btn btn-secondary" style={{ cursor: "pointer" }}>
+                        {c.loading ? "⏳ Lecture..." : "📂 Charger PDF/CSV"}
+                      </label>
+                    </div>
+                    <button className="btn btn-danger" onClick={() => removeCompte(c.id)}>🗑️</button>
+                  </div>
+                  {c.data.length > 0 && (
+                    <div style={{ marginTop: 10, fontSize: 11, color: "#10b981" }}>
+                      ✓ {c.data.length} transactions chargées {c.fileType === "pdf" && "(PDF)"}
+                    </div>
+                  )}
+                  {c.soldes && <SoldesInline soldes={c.soldes} metadata={c.metadata} />}
+                </div>
+              ))}
+
+              <div className="setting-row">
+                <label>Tolérance date (jours):</label>
+                <input type="number" min="0" max="30" value={dateTolerance} onChange={(e) => setDateTolerance(parseInt(e.target.value) || 7)} />
+                <span style={{ fontSize: 11, color: "var(--text-dim)" }}>Réception doit être ≥ envoi, dans les N jours.</span>
+              </div>
+
+              <div className="actions">
+                <button className="btn btn-secondary" onClick={addCompte}>➕ Ajouter un compte</button>
+                <button className="btn btn-primary" onClick={runFluxAnalysis}>🔀 Analyser les flux</button>
+              </div>
+            </div>
+
+            {fluxResult && (
+              <div className="card">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+                  <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: 18 }}>🔄 Flux intercomptes ({filteredFlux.length}/{fluxResult.length})</h2>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button className="btn btn-export" onClick={exportFluxExcel}>📥 Excel ({filteredFlux.length})</button>
+                    <button className="btn btn-primary" onClick={exportFluxPDF}>📄 Télécharger PDF</button>
+                  </div>
+                </div>
+
+                <div className="stats">
+                  <div className="stat-card"><div className="stat-value" style={{ color: "#10b981" }}>{matchedCount}</div><div className="stat-label">Appariés</div></div>
+                  <div className="stat-card"><div className="stat-value" style={{ color: "#fca5a5" }}>{unmatchedSentCount}</div><div className="stat-label">Envois sans réception</div></div>
+                  <div className="stat-card"><div className="stat-value" style={{ color: "#c4b5fd" }}>{unmatchedReceivedCount}</div><div className="stat-label">Réceptions sans envoi</div></div>
+                  <div className="stat-card"><div className="stat-value" style={{ color: "#a855f7" }}>{scaleErrorCount}</div><div className="stat-label">Erreurs ×100</div></div>
+                </div>
+
+                <div style={{ display: "flex", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>Source</label>
+                    <select className="styled-select" value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
+                      <option value="">-- Toutes --</option>
+                      {uniqueSources.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>Destination</label>
+                    <select className="styled-select" value={destFilter} onChange={(e) => setDestFilter(e.target.value)}>
+                      <option value="">-- Toutes --</option>
+                      {uniqueDests.map((d) => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>Statut</label>
+                    <select className="styled-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                      <option value="">-- Tous --</option>
+                      {uniqueStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date envoi</th><th>Source</th><th>Date réception</th><th>Destination</th>
+                        <th>Montant</th><th>Délai</th><th>Libellé source</th><th>Libellé destination</th><th>Statut</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredFlux.map((f, i) => {
+                        const cls =
+                          f.Statut === "matched" ? "tag-matched" :
+                          f.Statut === "matched_delayed" ? "tag-matched-delayed" :
+                          f.Statut === "unmatched_sent" ? "tag-unmatched-out" :
+                          f.Statut === "unmatched_received" ? "tag-unmatched-in" :
+                          f.Statut === "scale_error" ? "tag-scale-error" : "tag-partial";
+                        const label =
+                          f.Statut === "matched" ? "✓ Apparié" :
+                          f.Statut === "matched_delayed" ? `≈ Délai ${f["Délai (jours)"]}j` :
+                          f.Statut === "unmatched_sent" ? "→ Envoi seul" :
+                          f.Statut === "unmatched_received" ? "← Réception seule" :
+                          f.Statut === "scale_error" ? "⚠ ×100" : f.Statut;
+                        return (
+                          <tr key={i}>
+                            <td>{f.Date}</td>
+                            <td>{f["Compte source"]}</td>
+                            <td>{f["Date réception"]}</td>
+                            <td>{f["Compte destination"]}</td>
+                            <td>{formatAmount(f.Montant)}</td>
+                            <td>{f["Délai (jours)"]}</td>
+                            <td style={{ fontSize: 11 }}>{f["Libellé source"]}</td>
+                            <td style={{ fontSize: 11 }}>{f["Libellé destination"]}</td>
+                            <td><span className={`tag ${cls}`}>{label}</span></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ═════ 🆕 SOLDES ═════ */}
+        {activeTab === "soldes" && (
+          <>
+            <div className="card">
+              <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: 18, marginBottom: 12 }}>📄 Extraction des soldes</h2>
+              <p style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 20 }}>
+                Chargez un ou plusieurs PDF de relevés bancaires. L'app extrait automatiquement le solde d'ouverture, le solde de fermeture, les totaux débits/crédits, et vérifie la cohérence comptable.
+              </p>
+
+              <div className="upload-zone" onClick={() => refPdfBatch.current?.click()}>
+                <div className="upload-icon">📤</div>
+                <div className="upload-label">Charger des PDFs</div>
+                <div className="upload-hint">Cliquez pour sélectionner un ou plusieurs relevés bancaires PDF</div>
+                <input ref={refPdfBatch} type="file" accept=".pdf" multiple onChange={(e) => handlePdfBatch(e.target.files)} style={{ display: "none" }} />
+              </div>
+
+              {loadingPdfBatch && (
+                <div style={{ marginTop: 16, fontSize: 12, color: "#fbbf24" }}>
+                  <span className="loading"></span> Extraction en cours… (chaque PDF prend 3-10s)
+                </div>
+              )}
+
+              {pdfsSoldes.length > 0 && (
+                <div className="actions">
+                  <button className="btn btn-export" onClick={exportSoldesCSV}>📥 Exporter CSV</button>
+                  <button className="btn btn-danger" onClick={clearAllSoldes}>🗑️ Tout effacer</button>
+                </div>
+              )}
+            </div>
+
+            {pdfsSoldes.length > 0 && (
+              <div className="card">
+                <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: 18, marginBottom: 20 }}>
+                  📊 Récapitulatif ({pdfsSoldes.length} relevé{pdfsSoldes.length > 1 ? "s" : ""})
+                </h2>
+
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Fichier</th><th>Banque</th><th>Compte</th><th>Période</th>
+                        <th>Ouverture</th><th>Débits</th><th>Crédits</th><th>Fermeture</th>
+                        <th>Vérification</th><th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pdfsSoldes.map((p) => {
+                        const v = p.soldes ? verifySoldes(p.soldes) : null;
+                        return (
+                          <tr key={p.id}>
+                            <td style={{ fontSize: 11, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.fileName}>{p.fileName}</td>
+                            <td>{p.loading ? <span className="loading" /> : p.metadata?.banque || "—"}</td>
+                            <td style={{ fontSize: 11 }}>{p.metadata?.compte || "—"}</td>
+                            <td style={{ fontSize: 11 }}>
+                              {p.metadata?.dateDebut && p.metadata?.dateFin
+                                ? `${p.metadata.dateDebut} → ${p.metadata.dateFin}`
+                                : "—"}
+                            </td>
+                            <td>{p.soldes?.ouverture != null ? formatAmount(p.soldes.ouverture) : "—"}</td>
+                            <td>{p.soldes?.totalDebits != null ? formatAmount(p.soldes.totalDebits) : "—"}</td>
+                            <td>{p.soldes?.totalCredits != null ? formatAmount(p.soldes.totalCredits) : "—"}</td>
+                            <td>{p.soldes?.fermeture != null ? formatAmount(p.soldes.fermeture) : "—"}</td>
+                            <td>
+                              {p.error ? (
+                                <span className="tag tag-mismatch">✗ Erreur</span>
+                              ) : p.loading ? (
+                                <span style={{ fontSize: 11, color: "var(--text-dim)" }}>Lecture…</span>
+                              ) : v == null ? (
+                                <span style={{ fontSize: 11, color: "var(--text-dim)" }}>—</span>
+                              ) : v.coherent ? (
+                                <span className="tag tag-coherent">✓ Cohérent</span>
+                              ) : (
+                                <span className="tag tag-incoherent" title={`Écart : ${formatAmount(v.ecart)}`}>
+                                  ⚠ Écart {formatAmount(v.ecart)}
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              <button className="btn btn-danger" style={{ padding: "4px 10px", fontSize: 10 }} onClick={() => removePdfSolde(p.id)}>🗑️</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="balance-formula" style={{ marginTop: 16 }}>
+                  💡 Formule de vérification : <strong>Ouverture − Débits + Crédits = Fermeture</strong> (tolérance 1 cent)
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ═════ HISTORIQUE ═════ */}
+        {activeTab === "historique" && (
+          <div className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+              <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: 18 }}>📜 Historique des conciliations ({history.length})</h2>
+              {history.length > 0 && <button className="btn btn-danger" onClick={clearHistory}>🗑️ Tout effacer</button>}
+            </div>
+
+            {history.length === 0 ? (
+              <div className="empty-history">Aucun historique pour l'instant. Lancez une conciliation ou une analyse de flux pour commencer.</div>
+            ) : (
+              history.map((item) => (
+                <div key={item.id} className="history-item">
+                  <div className="history-header">
+                    <div>
+                      <div className="history-title">{item.type === "rapprochement" ? "🏦 Rapprochement" : "🔀 Flux intercomptes"}</div>
+                      <div className="history-comptes">{item.comptes.join(" ↔ ")}</div>
+                    </div>
+                    <div className="history-date">{formatHistoryDate(item.date)}</div>
+                  </div>
+                  <div className="history-stats">
+                    {item.type === "rapprochement" ? (
+                      <>
+                        <span><strong>{item.stats.matched}</strong> rapprochés</span>
+                        {item.stats.partial > 0 && <span><strong>{item.stats.partial}</strong> partiels</span>}
+                        {item.stats.mismatch > 0 && <span><strong>{item.stats.mismatch}</strong> mismatch</span>}
+                        {item.stats.scaleError > 0 && <span><strong>{item.stats.scaleError}</strong> ×100</span>}
+                        <span><strong>{item.stats.aOnly}</strong> seulement A</span>
+                        <span><strong>{item.stats.bOnly}</strong> seulement B</span>
+                      </>
+                    ) : (
+                      <>
+                        <span><strong>{item.stats.matched}</strong> appariés</span>
+                        <span><strong>{item.stats.unmatchedSent}</strong> envois seuls</span>
+                        <span><strong>{item.stats.unmatchedReceived}</strong> réceptions seules</span>
+                        {item.stats.scaleError > 0 && <span><strong>{item.stats.scaleError}</strong> ×100</span>}
+                      </>
+                    )}
+                  </div>
+                  <div className="history-actions">
+                    <button className="btn btn-secondary" onClick={() => replayHistoryItem(item)}>👁️ Revoir</button>
+                    <button className="btn btn-danger" onClick={() => deleteHistoryItem(item.id)}>🗑️ Supprimer</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOUS-COMPOSANTS
+// ═══════════════════════════════════════════════════════════════════════════
+function UploadZone({ refInput, acc, label, onChange }) {
+  const zoneClass = acc.loading ? "upload-zone loading" : acc.data.length ? "upload-zone active" : "upload-zone";
+  return (
+    <div className={zoneClass} onClick={() => !acc.loading && refInput.current?.click()}>
+      <div className="upload-icon">{acc.loading ? "⏳" : "📤"}</div>
+      <div className="upload-label">{label}</div>
+      <div className="upload-hint">{acc.loading ? "Extraction en cours..." : "Cliquez : PDF bancaire ou CSV"}</div>
+      {acc.data.length > 0 && !acc.loading && (
+        <div className={`upload-badge ${acc.fileType === "pdf" ? "pdf" : ""}`}>
+          ✓ {acc.data.length} transactions {acc.fileType === "pdf" ? "(PDF)" : "(CSV)"}
+        </div>
+      )}
+      <input ref={refInput} type="file" accept=".csv,.pdf" onChange={onChange} style={{ display: "none" }} />
+    </div>
+  );
+}
+
+// 🆕 Aperçu des transactions chargées (sous l'upload zone)
+function TransactionsPreview({ data, nom }) {
+  if (!data || !data.length) return null;
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+        Aperçu — {data.length} transaction{data.length > 1 ? "s" : ""} {nom ? `· ${nom}` : ""}
+      </div>
+      <div className="table-wrapper" style={{ maxHeight: 260, overflowY: "auto" }}>
+        <table>
+          <thead>
+            <tr><th>Date</th><th>Libellé</th><th>Montant</th></tr>
+          </thead>
+          <tbody>
+            {data.map((row, i) => {
+              const montant = getAmount(row);
+              return (
+                <tr key={i}>
+                  <td style={{ fontSize: 11, whiteSpace: "nowrap" }}>{gDate(row)}</td>
+                  <td style={{ fontSize: 11 }}>{gLabel(row)}</td>
+                  <td style={{ fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", color: montant < 0 ? "#f87171" : "#10b981" }}>
+                    {formatAmount(montant)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// 🆕 Affiche les soldes extraits d'un PDF (sous l'upload zone)
+function SoldesInline({ soldes, metadata }) {
+  const v = verifySoldes(soldes);
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className={`balance-info ${v && !v.coherent ? "warning" : ""}`}>
+        {v && v.coherent ? "✓" : v ? "⚠" : "ℹ️"}
+        {metadata?.banque && ` ${metadata.banque}`}
+        {metadata?.compte && ` · ${metadata.compte}`}
+        {metadata?.dateDebut && metadata?.dateFin && ` · ${metadata.dateDebut} → ${metadata.dateFin}`}
+        {v && !v.coherent && ` · Écart ${formatAmount(v.ecart)}`}
+      </div>
+      <div className="balance-grid">
+        {soldes.ouverture != null && (
+          <div className="balance-item">
+            <div className="balance-item-label">Ouverture</div>
+            <div className="balance-item-value">{formatAmount(soldes.ouverture)}</div>
+          </div>
+        )}
+        {soldes.totalDebits != null && (
+          <div className="balance-item">
+            <div className="balance-item-label">Débits</div>
+            <div className="balance-item-value" style={{ color: "#f87171" }}>−{formatAmount(soldes.totalDebits)}</div>
+          </div>
+        )}
+        {soldes.totalCredits != null && (
+          <div className="balance-item">
+            <div className="balance-item-label">Crédits</div>
+            <div className="balance-item-value" style={{ color: "#10b981" }}>+{formatAmount(soldes.totalCredits)}</div>
+          </div>
+        )}
+        {soldes.fermeture != null && (
+          <div className="balance-item">
+            <div className="balance-item-label">Fermeture</div>
+            <div className="balance-item-value">{formatAmount(soldes.fermeture)}</div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
