@@ -664,7 +664,7 @@ const pickBestCandidate = (candidates, sent) =>
   })[0];
 
 const detectIntercomptesLocally = (comptes, options = {}) => {
-  const { dateTolerance = 7, amountTolerance = 0.01, detectScaleErrors = true } = options;
+  const { dateTolerance = 7, amountTolerance = 0.01, detectScaleErrors = true, mainCompte = null } = options;
   const allTxs = [];
   comptes.forEach((compte) => {
     compte.data.forEach((row, idx) => {
@@ -678,6 +678,10 @@ const detectIntercomptesLocally = (comptes, options = {}) => {
     });
   });
 
+  // 🆕 Un transfert est pertinent seulement s'il touche le compte principal
+  const touchesMain = (compteA, compteB) =>
+    !mainCompte || compteA === mainCompte || compteB === mainCompte;
+
   const matched = new Set();
   const flux = [];
   const debits = allTxs.filter((t) => t.isDebit).sort((a, b) => a.date.localeCompare(b.date));
@@ -690,6 +694,8 @@ const detectIntercomptesLocally = (comptes, options = {}) => {
       if (rcv.compte === sent.compte) return false;
       if (rcv.amount <= 0) return false;
       if (matched.has(`${rcv.compte}|${rcv.idx}`)) return false;
+      // 🆕 Garder seulement les transferts touchant le compte principal
+      if (!touchesMain(sent.compte, rcv.compte)) return false;
       const dDelta = daysBetween(sent.date, rcv.date);
       if (dDelta < 0 || dDelta > dateTolerance) return false;
       return Math.abs(rcv.absAmount - sent.absAmount) <= amountTolerance;
@@ -700,6 +706,7 @@ const detectIntercomptesLocally = (comptes, options = {}) => {
         if (rcv.compte === sent.compte) return false;
         if (rcv.amount <= 0) return false;
         if (matched.has(`${rcv.compte}|${rcv.idx}`)) return false;
+        if (!touchesMain(sent.compte, rcv.compte)) return false;
         const dDelta = daysBetween(sent.date, rcv.date);
         if (dDelta < 0 || dDelta > dateTolerance) return false;
         const ratio = sent.absAmount / rcv.absAmount;
@@ -715,7 +722,10 @@ const detectIntercomptesLocally = (comptes, options = {}) => {
     }
 
     if (candidates.length === 0) {
-      if (looksLikeIntercompte(sent.label)) flux.push(buildUnmatchedRow(sent, "unmatched_sent"));
+      // 🆕 Envoi non apparié : seulement si depuis le compte principal
+      if (looksLikeIntercompte(sent.label) && (!mainCompte || sent.compte === mainCompte)) {
+        flux.push(buildUnmatchedRow(sent, "unmatched_sent"));
+      }
       continue;
     }
 
@@ -728,7 +738,10 @@ const detectIntercomptesLocally = (comptes, options = {}) => {
 
   for (const rcv of allTxs.filter((t) => !t.isDebit && t.amount > 0)) {
     if (matched.has(`${rcv.compte}|${rcv.idx}`)) continue;
-    if (looksLikeIntercompte(rcv.label)) flux.push(buildUnmatchedRow(rcv, "unmatched_received"));
+    // 🆕 Réception non appariée : seulement si sur le compte principal
+    if (looksLikeIntercompte(rcv.label) && (!mainCompte || rcv.compte === mainCompte)) {
+      flux.push(buildUnmatchedRow(rcv, "unmatched_received"));
+    }
   }
 
   flux.sort((a, b) => a.Date.localeCompare(b.Date));
@@ -966,7 +979,9 @@ JSON uniquement (sans markdown) :
       alert("Il faut au moins 2 comptes avec des données et un nom !");
       return;
     }
-    const result = detectIntercomptesLocally(valid, { dateTolerance });
+    // 🆕 Le premier compte de la liste est le compte principal
+    const mainCompte = valid[0].nom;
+    const result = detectIntercomptesLocally(valid, { dateTolerance, mainCompte });
     setFluxResult(result);
 
     const newHistory = addToHistory({
@@ -1376,11 +1391,21 @@ JSON uniquement (sans markdown) :
         {activeTab === "intercomptes" && (
           <>
             <div className="card">
-              <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: 18, marginBottom: 20 }}>🏢 Comptes à analyser</h2>
+              <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: 18, marginBottom: 8 }}>🏢 Comptes à analyser</h2>
+              <p style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 20, lineHeight: 1.6 }}>
+                Le <strong style={{ color: "#10b981" }}>compte #1 est le compte principal</strong>. L'analyse ne détecte que les transferts qui le touchent — soit comme source, soit comme destination. Les transferts entre deux comptes secondaires sont ignorés.
+              </p>
               {comptes.map((c, idx) => (
                 <div key={c.id} style={{ marginBottom: 20, padding: 16, background: "var(--card-solid)", borderRadius: 8 }}>
                   <div style={{ display: "flex", gap: 12, alignItems: "end" }}>
-                    <div style={{ flex: "0 0 40px", fontFamily: "Syne, sans-serif", fontSize: 14, color: "var(--text-dim)" }}>#{idx + 1}</div>
+                    <div style={{ flex: "0 0 90px" }}>
+                      <div style={{ fontFamily: "Syne, sans-serif", fontSize: 14, color: "var(--text-dim)" }}>#{idx + 1}</div>
+                      {idx === 0 && (
+                        <div style={{ fontSize: 9, fontWeight: 700, color: "#10b981", background: "rgba(16,185,129,.12)", border: "1px solid rgba(16,185,129,.3)", borderRadius: 10, padding: "2px 7px", marginTop: 4, textAlign: "center", letterSpacing: ".5px" }}>
+                          PRINCIPAL
+                        </div>
+                      )}
+                    </div>
                     <div style={{ flex: 1 }}>
                       <label style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>Nom du compte</label>
                       <input className="styled-input" type="text" value={c.nom} onChange={(e) => updateCompteNom(c.id, e.target.value)} placeholder="Ex: BMO Chèque" />
